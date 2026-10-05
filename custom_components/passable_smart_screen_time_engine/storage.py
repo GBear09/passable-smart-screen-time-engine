@@ -142,12 +142,35 @@ class PassableScreenTimeStorage:
 
             # Resolve target entity
             target_entity = None
-            # Check media_players
-            for mp in self.hass.states.async_entity_ids("media_player"):
-                if dev_id in mp:
-                    target_entity = mp
-                    break
-            # Check switches
+
+            # 1. Preserve existing target entity if already configured in storage
+            if dev_id in self.data.get("devices", {}) and self.data["devices"][dev_id].get("target_entity"):
+                target_entity = self.data["devices"][dev_id]["target_entity"]
+
+            # 2. Check media_players (prioritize actual TVs, ignore speakers and MA virtual players)
+            if not target_entity:
+                mp_candidates = [
+                    mp for mp in self.hass.states.async_entity_ids("media_player")
+                    if dev_id in mp
+                ]
+                tv_candidates = [
+                    mp for mp in mp_candidates
+                    if "tv" in mp and not any(k in mp for k in ("speaker", "echo", "dot", "_ma"))
+                ]
+                if tv_candidates:
+                    active_tvs = [
+                        mp for mp in tv_candidates
+                        if self.hass.states.get(mp) and self.hass.states.get(mp).state not in ("unavailable", "unknown")
+                    ]
+                    target_entity = active_tvs[0] if active_tvs else sorted(tv_candidates, reverse=True)[0]
+                elif mp_candidates:
+                    non_speakers = [
+                        mp for mp in mp_candidates
+                        if not any(k in mp for k in ("speaker", "echo", "dot", "_ma"))
+                    ]
+                    target_entity = non_speakers[0] if non_speakers else mp_candidates[0]
+
+            # 3. Check switches (e.g. personal tablets, network pause)
             if not target_entity:
                 for sw in self.hass.states.async_entity_ids("switch"):
                     if dev_id in sw:

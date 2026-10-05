@@ -12,9 +12,9 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
-from .const import DOMAIN, FRONTEND_URL_PATH
+from .const import CONF_DEVICES, CONF_GLOBAL_RESTRICTIONS, DOMAIN, FRONTEND_URL_PATH
 from .engine import PassableScreenTimeEngine
-from .storage import PassableScreenTimeStorage
+from .storage import PassableScreenTimeStorage, get_default_device_data
 from .websocket import async_register_websocket_commands
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,14 +112,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await engine.async_setup()
 
+    # Populate any explicitly selected devices from config flow
+    selected_devices = entry.data.get(CONF_DEVICES, [])
+    for entity_id in selected_devices:
+        dev_id = entity_id.split(".", 1)[-1]
+        if dev_id not in storage.get_all_devices():
+            state_obj = hass.states.get(entity_id)
+            name = (
+                state_obj.attributes.get("friendly_name")
+                if state_obj
+                else dev_id.replace("_", " ").title()
+            )
+            payload = get_default_device_data(dev_id, entity_id, name=name)
+            await storage.async_update_device(dev_id, payload)
+
+    # Populate any global restrictions
+    restrictions = [
+        {"entity": e}
+        for e in entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
+    ]
+    if restrictions:
+        await storage.async_update_global_restrictions(restrictions)
+
     # Automatically import legacy helpers if selected during initial config flow
     if entry.data.get("import_helpers", False):
         try:
             await engine.storage.async_import_legacy_helpers()
-            engine.async_rebuild_device_listeners()
-            await engine.async_evaluate_schedules()
         except Exception as err:
             _LOGGER.warning("Could not auto-import legacy helpers: %s", err)
+
+    engine.async_rebuild_device_listeners()
+    await engine.async_evaluate_schedules()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = engine
 

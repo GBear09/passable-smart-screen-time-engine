@@ -83,13 +83,21 @@ class PassableScreenTimeOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__()
+        self._config_entry = config_entry
+
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return the config entry."""
+        return self._config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage devices and settings."""
-        engine = self.hass.data[DOMAIN][self.config_entry.entry_id]
+        engine = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if not engine:
+            return self.async_abort(reason="single_instance_allowed")
 
         if user_input is not None:
             # Sync devices in storage

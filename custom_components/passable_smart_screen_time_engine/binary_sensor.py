@@ -109,3 +109,8 @@ class PassableScreenTimeActiveLockoutsBinarySensor(BinarySensorEntity):
                 self.hass, SIGNAL_STORAGE_UPDATED, _handle_update
             )
         )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, SIGNAL_ENGINE_UPDATED, _handle_update
+            )
+        )

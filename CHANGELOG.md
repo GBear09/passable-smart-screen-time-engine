@@ -2,6 +2,14 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.1.1] - 2026-10-05
+
+### 🐛 Fixed
+- **Resolved 500 Internal Server Error**: Fixed missing `SIGNAL_STORAGE_UPDATED` in `const.py` which caused an `ImportError` when loading `binary_sensor.py` during entry setup.
+- **Smart Target Entity Resolution**: Enhanced `async_import_legacy_helpers` to prioritize actual smart TVs over speakers and virtual MA players, correctly mapping TV hardware entities.
+- **Robust Config Flow Initialization**: Fixed options flow base class inheritance and added graceful fallback handling.
+- **Flexible Setup Ingestion**: Enabled automated helper importing even when no initial entities are manually selected in the setup dialog.
+
 ## [1.1.0] - 2026-10-05
 
 ### ✨ Added

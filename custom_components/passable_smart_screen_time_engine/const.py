@@ -32,6 +32,7 @@ DEVICE_TYPE_NETWORK_SWITCH = "network_switch"
 
 SIGNAL_DEVICE_UPDATED = "passable_screen_time_device_updated"
 SIGNAL_ENGINE_UPDATED = "passable_screen_time_engine_updated"
+SIGNAL_STORAGE_UPDATED = "passable_screen_time_storage_updated"
 
 FRONTEND_URL_PATH = "/passable_screen_time_frontend/passable-screen-time-card.js"
 

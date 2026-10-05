@@ -272,6 +272,32 @@ class PassableScreenTimeEngine:
 
         async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
 
+    async def async_toggle_all_lockouts(self) -> None:
+        """Master toggle: if any device is locked, unlock all; otherwise lock all."""
+        devices = self.storage.get_all_devices()
+        if not devices:
+            return
+
+        any_locked = any(d.get("locked", False) for d in devices.values()) or bool(
+            self._active_restrictions
+        )
+        target_locked = not any_locked
+
+        for dev_id in devices:
+            await self.async_set_device_lockout(
+                dev_id, locked=target_locked, power_on=False
+            )
+
+    async def async_set_all_lockouts(
+        self, locked: bool, power_on: bool = False
+    ) -> None:
+        """Set lockout state for all managed devices."""
+        devices = self.storage.get_all_devices()
+        for dev_id in devices:
+            await self.async_set_device_lockout(
+                dev_id, locked=locked, power_on=power_on
+            )
+
     async def _async_enforce_device_locked(self, device_id: str) -> None:
         """Send turn-off or network pause command to hardware."""
         dev = self.storage.get_device(device_id)

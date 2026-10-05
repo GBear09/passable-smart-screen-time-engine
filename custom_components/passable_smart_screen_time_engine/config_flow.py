@@ -61,6 +61,9 @@ class PassableScreenTimeConfigFlow(
                         multiple=True,
                     )
                 ),
+                vol.Optional(
+                    "import_helpers", default=True
+                ): selector.BooleanSelector(),
             }
         )
 
@@ -115,6 +118,9 @@ class PassableScreenTimeOptionsFlow(config_entries.OptionsFlow):
             ]
             await engine.storage.async_update_global_restrictions(restrictions)
 
+            if user_input.get("import_helpers"):
+                await engine.storage.async_import_legacy_helpers()
+
             engine.async_rebuild_device_listeners()
             await engine.async_evaluate_schedules()
 
@@ -151,6 +157,9 @@ class PassableScreenTimeOptionsFlow(config_entries.OptionsFlow):
                         multiple=True,
                     )
                 ),
+                vol.Optional(
+                    "import_helpers", default=False
+                ): selector.BooleanSelector(),
             }
         )
 

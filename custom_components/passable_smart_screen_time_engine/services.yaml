@@ -45,8 +45,9 @@ set_lockout:
   fields:
     device_id:
       name: Device ID
-      description: The ID of the managed device.
-      required: true
+      description: The ID of the managed device, or 'all' to set all devices.
+      required: false
+      default: all
       selector:
         text: {}
     locked:
@@ -62,6 +63,11 @@ set_lockout:
       selector:
         boolean: {}
 
+toggle_all_lockouts:
+  name: Toggle All Lockouts
+  description: Master toggle for all managed screen time devices. If any device is locked, unlocks all; if all are unlocked, locks all.
+
 import_legacy_helpers:
   name: Import Legacy Helpers
   description: Scans Home Assistant for legacy device lockout input_text and input_boolean helpers and migrates them into native .storage.
+

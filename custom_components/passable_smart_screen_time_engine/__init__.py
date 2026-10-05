@@ -19,7 +19,11 @@ from .websocket import async_register_websocket_commands
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.SWITCH,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+]
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
@@ -108,12 +112,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await engine.async_setup()
 
+    # Automatically import legacy helpers if selected during initial config flow
+    if entry.data.get("import_helpers", False):
+        try:
+            await engine.storage.async_import_legacy_helpers()
+            engine.async_rebuild_device_listeners()
+            await engine.async_evaluate_schedules()
+        except Exception as err:
+            _LOGGER.warning("Could not auto-import legacy helpers: %s", err)
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = engine
 
     # Register services
     _async_register_services(hass, engine)
 
-    # Forward setup to platforms (switch, sensor)
+    # Forward setup to platforms (switch, sensor, binary_sensor)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -136,10 +149,16 @@ def _async_register_services(
         engine.async_cancel_device_timer(device_id)
 
     async def handle_set_lockout(call: ServiceCall) -> None:
-        device_id = call.data["device_id"]
+        device_id = call.data.get("device_id", "all")
         locked = call.data["locked"]
         power_on = call.data.get("power_on", False)
-        await engine.async_set_device_lockout(device_id, locked, power_on)
+        if device_id in ("all", "*", "", None):
+            await engine.async_set_all_lockouts(locked, power_on)
+        else:
+            await engine.async_set_device_lockout(device_id, locked, power_on)
+
+    async def handle_toggle_all_lockouts(call: ServiceCall) -> None:
+        await engine.async_toggle_all_lockouts()
 
     async def handle_import_legacy_helpers(call: ServiceCall) -> None:
         count = await engine.storage.async_import_legacy_helpers()
@@ -175,11 +194,17 @@ def _async_register_services(
         handle_set_lockout,
         schema=vol.Schema(
             {
-                vol.Required("device_id"): cv.string,
+                vol.Optional("device_id", default="all"): cv.string,
                 vol.Required("locked"): cv.boolean,
                 vol.Optional("power_on", default=False): cv.boolean,
             }
         ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "toggle_all_lockouts",
+        handle_toggle_all_lockouts,
     )
 
     hass.services.async_register(

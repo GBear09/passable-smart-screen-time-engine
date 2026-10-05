@@ -9,6 +9,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATED, SIGNAL_ENGINE_UPDATED
@@ -26,7 +27,7 @@ async def async_setup_entry(
     engine: PassableScreenTimeEngine = hass.data[DOMAIN][entry.entry_id]
     devices = engine.storage.get_all_devices()
 
-    entities: list[SwitchEntity] = []
+    entities: list[SwitchEntity] = [PassableMasterLockoutSwitch(engine)]
     for dev_id, dev_data in devices.items():
         entities.append(PassableLockoutSwitch(engine, dev_id))
         entities.append(PassableScheduleSwitch(engine, dev_id))
@@ -138,3 +139,71 @@ class PassableScheduleSwitch(SwitchEntity):
                 self.hass, SIGNAL_ENGINE_UPDATED, _handle_update
             )
         )
+
+
+class PassableMasterLockoutSwitch(SwitchEntity):
+    """Master switch to lock or unlock all managed screen time devices at once."""
+
+    _attr_has_entity_name = False
+    _attr_name = "Master Device Lockout"
+
+    def __init__(self, engine: PassableScreenTimeEngine) -> None:
+        """Initialize master lockout switch."""
+        self.engine = engine
+        self._attr_unique_id = f"{DOMAIN}_master_lockout"
+        self.entity_id = "switch.passable_master_device_lockout"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return hub device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, "hub")},
+            name="Passable Smart Screen Time Engine",
+            manufacturer="Passable",
+            model="Screen Time & Lockout Hub",
+            sw_version="1.1.0",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if any managed device is locked."""
+        devices = self.engine.storage.get_all_devices()
+        return any(d.get("locked", False) for d in devices.values()) or bool(
+            self.engine._active_restrictions
+        )
+
+    @property
+    def icon(self) -> str:
+        """Dynamic icon for master lockout switch."""
+        return "mdi:television-off" if self.is_on else "mdi:television"
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Lock all managed devices."""
+        await self.engine.async_set_all_lockouts(locked=True, power_on=False)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Unlock all managed devices."""
+        await self.engine.async_set_all_lockouts(locked=False, power_on=False)
+
+    async def async_toggle(self, **kwargs: Any) -> None:
+        """Toggle all managed devices."""
+        await self.engine.async_toggle_all_lockouts()
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to dispatcher signals."""
+
+        @callback
+        def _handle_update(*args: Any) -> None:
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, SIGNAL_DEVICE_UPDATED, _handle_update
+            )
+        )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, SIGNAL_ENGINE_UPDATED, _handle_update
+            )
+        )
+

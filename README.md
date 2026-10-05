@@ -113,6 +113,10 @@ subtitle: Family Media Supervision
 
 ## 🛠️ Provided Entities & Services
 
+### Global & Master Entities
+* **Active Lockouts Sensor**: `binary_sensor.passable_screen_time_active_lockouts` (`on` when any device is locked, includes `locked_count`, `locked_devices`, `active_restrictions`).
+* **Master Lockout Switch**: `switch.passable_master_device_lockout` (Turn ON to lock all, OFF to unlock all, Toggle to toggle all).
+
 ### Entities per Managed Device
 * **Lockout Switch**: `switch.<device>_screen_time_lockout` (ON = Locked, OFF = Unlocked).
 * **Schedule Switch**: `switch.<device>_screen_time_schedule` (Master schedule enable/disable).
@@ -120,9 +124,11 @@ subtitle: Family Media Supervision
 * **Active App Sensor**: `sensor.<device>_active_app` (Current app e.g. `Disney+`, `YouTube`).
 
 ### Services
+* `passable_smart_screen_time_engine.toggle_all_lockouts`: Master toggle: unlocks all devices if any are locked; locks all if all are unlocked.
+* `passable_smart_screen_time_engine.set_lockout`: Manually lock or unlock a device (or all devices by omitting `device_id`).
 * `passable_smart_screen_time_engine.start_timer`: Start a countdown viewing window.
 * `passable_smart_screen_time_engine.cancel_timer`: Cancel an active timer.
-* `passable_smart_screen_time_engine.set_lockout`: Manually lock or unlock a device.
+* `passable_smart_screen_time_engine.import_legacy_helpers`: Scan and import schedules from legacy helpers into `.storage`.
 
 ---
 

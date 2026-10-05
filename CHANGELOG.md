@@ -2,6 +2,16 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.1.0] - 2026-10-05
+
+### ✨ Added
+- **Native Active Lockouts Sensor**: Added `binary_sensor.passable_screen_time_active_lockouts` (`Active Device Lockouts`) reporting collective lockout status and rich attributes (`locked_count`, `locked_devices`, `locked_device_names`, `all_locked`, `active_restrictions`).
+- **Master Device Lockout Switch**: Added `switch.passable_master_device_lockout` to lock, unlock, or toggle all managed devices simultaneously without requiring custom scripts.
+- **Master Toggle Service**: Added `passable_smart_screen_time_engine.toggle_all_lockouts` service action for easy 1-touch dashboard automation.
+- **Automated Setup Migration Checkbox**: Added `import_helpers` boolean selector in config flow and options flow to automatically import existing schedules upon initial setup.
+- **Friendly Configuration Flow Descriptions**: Added comprehensive `strings.json` and `translations/en.json` explaining each setting, supported entity types (`media_player` TVs, `switch` Eero pauses), and human-friendly labels.
+- **Component Brand Assets**: Bundled `icon.png`, `logo.png`, and `brand/` assets directly inside `custom_components/passable_smart_screen_time_engine/` so Home Assistant's "Add Integration" brand picker displays the official icon.
+
 ## [1.0.0] - 2026-10-05
 
 ### ✨ Added

@@ -1,0 +1,100 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Passable Smart Screen Time Engine",
+        "description": "Configure the smart TVs, media players, and personal devices you want to manage with automated downtime schedules and \"One More Show\" viewing timers.",
+        "data": {
+          "devices": "Managed Screen Time Devices",
+          "global_restrictions": "Global Lockout Restrictions (Optional)",
+          "import_helpers": "Import Existing Schedules from Legacy Helpers"
+        },
+        "data_description": {
+          "devices": "Select Smart TVs / Media Players (media_player) or network pause switches (switch, e.g. Eero Wi-Fi pause for tablets) to manage.",
+          "global_restrictions": "Select any input boolean or group entities (e.g. Dog Needs Out, Homework Time) that should immediately restrict all devices when active.",
+          "import_helpers": "Automatically import existing TV & tablet schedules and toggles from legacy input_text and input_boolean helpers into .storage."
+        }
+      }
+    },
+    "error": {
+      "no_devices_selected": "Please select at least one media player or switch to manage."
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single instance of Passable Smart Screen Time Engine is supported."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Passable Smart Screen Time Engine Settings",
+        "description": "Add or remove managed devices, update global restrictions, or trigger a schedule re-import.",
+        "data": {
+          "devices": "Managed Screen Time Devices",
+          "global_restrictions": "Global Lockout Restrictions (Optional)",
+          "import_helpers": "Re-import Schedules from Legacy Helpers"
+        },
+        "data_description": {
+          "devices": "Select Smart TVs / Media Players (media_player) or network pause switches (switch).",
+          "global_restrictions": "Entities that trigger an immediate lockout across all devices when ON.",
+          "import_helpers": "Re-scan Home Assistant for legacy helpers and merge any new schedules into storage."
+        }
+      }
+    }
+  },
+  "services": {
+    "start_timer": {
+      "name": "Start Viewing Timer",
+      "description": "Starts a temporary countdown viewing timer (\"One More Show\") and unlocks the target device.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the managed device (e.g., living_room_tv_2)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Number of minutes or hours."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "Duration unit (minutes or hours)."
+        }
+      }
+    },
+    "cancel_timer": {
+      "name": "Cancel Viewing Timer",
+      "description": "Cancels an active countdown timer for a device.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the managed device."
+        }
+      }
+    },
+    "set_lockout": {
+      "name": "Set Device Lockout",
+      "description": "Explicitly lock or unlock a device and update hardware power or network pause.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the managed device, or 'all' to set all devices."
+        },
+        "locked": {
+          "name": "Locked",
+          "description": "True to lock (restrict), False to unlock."
+        },
+        "power_on": {
+          "name": "Power On Device",
+          "description": "If unlocking, whether to also turn ON the media player or unpause network switch."
+        }
+      }
+    },
+    "toggle_all_lockouts": {
+      "name": "Toggle All Lockouts",
+      "description": "Master toggle for all managed devices. Unlocks all devices if any are locked; locks all devices if all are unlocked."
+    },
+    "import_legacy_helpers": {
+      "name": "Import Legacy Helpers",
+      "description": "Scans Home Assistant for legacy device_lockout helpers (input_text and input_boolean) and imports schedules into storage."
+    }
+  }
+}

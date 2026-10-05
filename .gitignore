@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.storage/
+*.log
+*.tmp
+node_modules/
+dist/
+build/

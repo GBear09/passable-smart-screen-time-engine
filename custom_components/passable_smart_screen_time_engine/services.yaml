@@ -1,0 +1,67 @@
+start_timer:
+  name: Start Viewing Timer
+  description: Starts a temporary countdown viewing timer ("one more show") and unlocks the target device.
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the managed device (e.g., living_room_tv_2).
+      required: true
+      selector:
+        text: {}
+    duration:
+      name: Duration
+      description: Number of minutes or hours.
+      required: true
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+    unit:
+      name: Unit
+      description: Duration unit (minutes or hours).
+      default: minutes
+      selector:
+        select:
+          options:
+            - minutes
+            - hours
+
+cancel_timer:
+  name: Cancel Viewing Timer
+  description: Cancels an active countdown timer for a device.
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the managed device.
+      required: true
+      selector:
+        text: {}
+
+set_lockout:
+  name: Set Device Lockout
+  description: Explicitly lock or unlock a device and update hardware power or network pause.
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the managed device.
+      required: true
+      selector:
+        text: {}
+    locked:
+      name: Locked
+      description: True to lock (restrict), False to unlock.
+      required: true
+      selector:
+        boolean: {}
+    power_on:
+      name: Power On Device
+      description: If unlocking, whether to also turn ON the media player or unpause network switch.
+      default: false
+      selector:
+        boolean: {}
+
+import_legacy_helpers:
+  name: Import Legacy Helpers
+  description: Scans Home Assistant for legacy device lockout input_text and input_boolean helpers and migrates them into native .storage.

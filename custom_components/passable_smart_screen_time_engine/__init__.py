@@ -1,0 +1,208 @@
+"""Passable Smart Screen Time Engine integration."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
+
+from .const import DOMAIN, FRONTEND_URL_PATH
+from .engine import PassableScreenTimeEngine
+from .storage import PassableScreenTimeStorage
+from .websocket import async_register_websocket_commands
+
+_LOGGER = logging.getLogger(__name__)
+
+PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.SENSOR]
+
+
+async def _async_register_frontend(hass: HomeAssistant) -> None:
+    """Register static frontend paths and Lovelace card resource."""
+    if hass.data.setdefault(DOMAIN, {}).get("frontend_registered"):
+        return
+
+    card_path = (
+        Path(__file__).parent / "frontend" / "passable-screen-time-card.js"
+    )
+    if not card_path.is_file():
+        _LOGGER.warning(
+            "Passable Screen Time Card file not found at %s", card_path
+        )
+        return
+
+    try:
+        from homeassistant.components.http import StaticPathConfig
+
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(FRONTEND_URL_PATH, str(card_path), cache_headers=False)]
+        )
+        hass.data[DOMAIN]["frontend_registered"] = True
+        _LOGGER.info(
+            "Passable Screen Time Card registered at %s", FRONTEND_URL_PATH
+        )
+    except Exception as err:
+        try:
+            hass.http.register_static_path(
+                FRONTEND_URL_PATH, str(card_path), cache_headers=False
+            )
+            hass.data[DOMAIN]["frontend_registered"] = True
+            _LOGGER.info(
+                "Passable Screen Time Card registered at %s (legacy)",
+                FRONTEND_URL_PATH,
+            )
+        except Exception as legacy_err:
+            _LOGGER.error("Failed to register static path: %s", legacy_err)
+
+    # Automatically register the Lovelace card resource if available
+    hass.async_create_task(_async_register_lovelace_resource(hass))
+
+
+async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
+    """Register the card as a Lovelace resource so users don't have to add it manually."""
+    try:
+        lovelace = hass.data.get("lovelace")
+        if not lovelace:
+            return
+
+        resources = getattr(lovelace, "resources", None)
+        if not resources:
+            return
+
+        if not resources.loaded:
+            await resources.async_load()
+
+        url_path = f"{FRONTEND_URL_PATH}?v=1.0.0"
+        for resource in resources.async_items():
+            if resource.get("url", "").startswith(FRONTEND_URL_PATH):
+                return
+
+        await resources.async_create_item(
+            {"res_type": "module", "url": url_path}
+        )
+        _LOGGER.info(
+            "Automatically registered Lovelace resource: %s", url_path
+        )
+    except Exception as err:
+        _LOGGER.debug(
+            "Could not automatically register Lovelace resource: %s", err
+        )
+
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Set up the Passable Smart Screen Time Engine component."""
+    await _async_register_frontend(hass)
+    async_register_websocket_commands(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Passable Smart Screen Time Engine from a config entry."""
+    storage = PassableScreenTimeStorage(hass)
+    engine = PassableScreenTimeEngine(hass, storage)
+
+    await engine.async_setup()
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = engine
+
+    # Register services
+    _async_register_services(hass, engine)
+
+    # Forward setup to platforms (switch, sensor)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    return True
+
+
+def _async_register_services(
+    hass: HomeAssistant, engine: PassableScreenTimeEngine
+) -> None:
+    """Register integration service actions."""
+
+    async def handle_start_timer(call: ServiceCall) -> None:
+        device_id = call.data["device_id"]
+        duration = call.data["duration"]
+        unit = call.data.get("unit", "minutes")
+        await engine.async_start_device_timer(device_id, duration, unit)
+
+    async def handle_cancel_timer(call: ServiceCall) -> None:
+        device_id = call.data["device_id"]
+        engine.async_cancel_device_timer(device_id)
+
+    async def handle_set_lockout(call: ServiceCall) -> None:
+        device_id = call.data["device_id"]
+        locked = call.data["locked"]
+        power_on = call.data.get("power_on", False)
+        await engine.async_set_device_lockout(device_id, locked, power_on)
+
+    async def handle_import_legacy_helpers(call: ServiceCall) -> None:
+        count = await engine.storage.async_import_legacy_helpers()
+        engine.async_rebuild_device_listeners()
+        await engine.async_evaluate_schedules()
+        _LOGGER.info(
+            "Legacy helpers import service finished: %s devices imported", count
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        "start_timer",
+        handle_start_timer,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("duration"): vol.Coerce(float),
+                vol.Optional("unit", default="minutes"): cv.string,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "cancel_timer",
+        handle_cancel_timer,
+        schema=vol.Schema({vol.Required("device_id"): cv.string}),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "set_lockout",
+        handle_set_lockout,
+        schema=vol.Schema(
+            {
+                vol.Required("device_id"): cv.string,
+                vol.Required("locked"): cv.boolean,
+                vol.Optional("power_on", default=False): cv.boolean,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN, "import_legacy_helpers", handle_import_legacy_helpers
+    )
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    engine: PassableScreenTimeEngine = hass.data[DOMAIN].get(entry.entry_id)
+    if engine:
+        await engine.async_unload()
+
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry, PLATFORMS
+    )
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+
+    return unload_ok
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry."""
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)

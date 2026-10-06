@@ -37,6 +37,7 @@ def get_default_device_data(
             DEVICE_TYPE_NETWORK_SWITCH if is_switch else DEVICE_TYPE_MEDIA_PLAYER
         ),
         "locked": False,
+        "locked_by_schedule": False,
         "schedule_enabled": True,
         "schedule_recurrence": RECURRENCE_WEEKLY,
         "schedule_days": list(DAYS_OF_WEEK),
@@ -307,16 +308,28 @@ class PassableScreenTimeStorage:
                 ):
                     del devices[existing_id]
 
+            existing_dev = devices.get(final_dev_id, {})
+            existing_mins = existing_dev.get("screen_time_today_minutes", 0)
+            existing_date = existing_dev.get("screen_time_date")
+            existing_apps = list(existing_dev.get("apps_used_today", []))
+            existing_active_app = existing_dev.get("active_app", "None")
+            existing_locked_by_sched = existing_dev.get("locked_by_schedule", False)
+
             device_payload = get_default_device_data(
                 device_id=final_dev_id, target_entity=target_entity, name=friendly_name
             )
             device_payload.update(
                 {
                     "locked": is_locked,
+                    "locked_by_schedule": existing_locked_by_sched,
                     "schedule_enabled": is_sched_en,
                     "schedule_days": sched_days,
                     "schedule_start": start_time,
                     "schedule_end": end_time,
+                    "screen_time_today_minutes": existing_mins,
+                    "screen_time_date": existing_date,
+                    "apps_used_today": existing_apps,
+                    "active_app": existing_active_app,
                 }
             )
 

@@ -277,6 +277,20 @@ def _async_register_services(
         schema=vol.Schema({vol.Required("device_id"): cv.string}),
     )
 
+    async def handle_reconcile_screen_time(call: ServiceCall) -> None:
+        device_id = call.data.get("device_id")
+        if device_id and device_id not in ("all", "*", ""):
+            await engine.async_reconcile_device_screen_time(device_id)
+        else:
+            await engine.async_reconcile_all_screen_time()
+
+    hass.services.async_register(
+        DOMAIN,
+        "reconcile_screen_time",
+        handle_reconcile_screen_time,
+        schema=vol.Schema({vol.Optional("device_id", default="all"): cv.string}),
+    )
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""

@@ -2,6 +2,18 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.3.0] - 2026-10-06
+
+### ✨ Added
+- **Recorder-Backed Screen Time Telemetry**: Integrated directly with Home Assistant Recorder (`state_changes_during_period`) to accurately reconcile and backfill cumulative active screen time and streaming apps used today. Screen time stats now reliably survive restarts, reloads, and manual migrations instead of relying on a volatile runtime counter.
+- **Downtime Schedule Auto-Unlock**: Enhanced the schedule evaluation engine to automatically release device lockouts when scheduled downtime ends, while tracking schedule lock origin (`locked_by_schedule`) so manual parent lockouts outside schedule hours remain locked.
+- **Automatic Network Switch Unpause**: When devices controlled via network switches (such as tablet wireless pause switches) are unlocked, the integration automatically issues `switch.turn_off` to restore Wi-Fi access immediately.
+- **Reconcile Screen Time Service**: Added `passable_smart_screen_time_engine.reconcile_screen_time` service for on-demand or automated history synchronization.
+
+### 🐛 Fixed
+- **Persistent Screen Time Across Imports**: Fixed an issue where running legacy helper migration or updating devices would overwrite accumulated minutes with zero. Existing telemetry (`screen_time_today_minutes`, `apps_used_today`, `screen_time_date`, and `locked_by_schedule`) is now strictly preserved.
+- **Accurate Active Media Player Detection**: Expanded active state evaluation beyond `"on"` to also include `"playing"`, `"idle"`, and `"paused"` states, preventing screen time gaps when pausing media.
+
 ## [1.2.0] - 2026-10-05
 
 ### ✨ Added & Redesigned (Smart Lock Engine Design Parity)

@@ -16,6 +16,14 @@ from homeassistant.helpers.event import (
 )
 import homeassistant.util.dt as dt_util
 
+try:
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.history import state_changes_during_period
+
+    HAVE_RECORDER = True
+except ImportError:
+    HAVE_RECORDER = False
+
 from .const import (
     APP_MAPPINGS,
     DAYS_OF_WEEK,
@@ -70,6 +78,93 @@ def _is_biweekly_active_this_week(anchor_date_str: str | None) -> bool:
         return True
 
 
+def _calculate_screen_time_from_states(
+    states: list[Any],
+    start_time: datetime,
+    end_time: datetime,
+    is_switch: bool = False,
+) -> tuple[int, list[str], str]:
+    """Calculate total active minutes, apps used, and current active app from state history."""
+    start_utc = dt_util.as_utc(start_time)
+    end_utc = dt_util.as_utc(end_time)
+
+    if not states:
+        return 0, [], "None"
+
+    sorted_states = sorted(
+        states,
+        key=lambda s: dt_util.as_utc(s.last_changed)
+        if getattr(s, "last_changed", None)
+        else start_utc,
+    )
+
+    total_seconds = 0.0
+    apps_used: list[str] = []
+    active_app = "None"
+
+    for i, state in enumerate(sorted_states):
+        if is_switch:
+            is_active = state.state == "off"  # switch off = unpaused
+        else:
+            is_active = state.state not in [
+                "off",
+                "standby",
+                "unavailable",
+                "unknown",
+            ]
+
+        # Extract active application from media player attributes
+        if not is_switch and is_active and hasattr(state, "attributes"):
+            raw_app = (
+                state.attributes.get("app_id")
+                or state.attributes.get("app_name")
+                or state.attributes.get("source")
+            )
+            if raw_app:
+                raw_clean = str(raw_app).strip().lower()
+                mapped_name = APP_MAPPINGS.get(raw_clean)
+                if not mapped_name and raw_clean not in IGNORED_APPS:
+                    mapped_name = str(raw_app).title()
+                if mapped_name and mapped_name not in IGNORED_APPS:
+                    if mapped_name not in apps_used:
+                        apps_used.append(mapped_name)
+                    if i == len(sorted_states) - 1:
+                        active_app = mapped_name
+        elif i == len(sorted_states) - 1:
+            active_app = "None"
+
+        if not is_active:
+            continue
+
+        state_start = (
+            dt_util.as_utc(state.last_changed)
+            if getattr(state, "last_changed", None)
+            else start_utc
+        )
+        if state_start < start_utc:
+            state_start = start_utc
+
+        if i + 1 < len(sorted_states):
+            next_state = sorted_states[i + 1]
+            state_end = (
+                dt_util.as_utc(next_state.last_changed)
+                if getattr(next_state, "last_changed", None)
+                else end_utc
+            )
+        else:
+            state_end = end_utc
+
+        if state_end > end_utc:
+            state_end = end_utc
+
+        duration = (state_end - state_start).total_seconds()
+        if duration > 0:
+            total_seconds += duration
+
+    total_minutes = int(round(total_seconds / 60.0))
+    return total_minutes, apps_used, active_app
+
+
 class PassableScreenTimeEngine:
     """Engine coordinating device lockouts, countdown timers, schedules, and screen time telemetry."""
 
@@ -93,6 +188,17 @@ class PassableScreenTimeEngine:
         """Initialize engine, restore timers, attach listeners and schedule evaluations."""
         await self.storage.async_load()
 
+        # Check date rollover on startup
+        today_str = dt_util.now().strftime("%Y-%m-%d")
+        for dev in self.storage.get_all_devices().values():
+            if dev.get("screen_time_date") != today_str:
+                dev["screen_time_today_minutes"] = 0
+                dev["apps_used_today"] = []
+                dev["screen_time_date"] = today_str
+
+        # Reconcile today's screen time from recorder history
+        await self.async_reconcile_all_screen_time()
+
         # Restore active countdown timers from storage
         self._restore_timers()
 
@@ -114,6 +220,84 @@ class PassableScreenTimeEngine:
         # Initial schedule evaluation
         await self.async_evaluate_schedules()
         _LOGGER.info("Passable Screen Time Engine successfully initialized")
+
+    async def async_reconcile_device_screen_time(self, device_id: str) -> None:
+        """Reconcile today's screen time and apps used for a device from HA recorder."""
+        if not HAVE_RECORDER or "recorder" not in self.hass.config.components:
+            return
+
+        dev = self.storage.get_device(device_id)
+        target = dev.get("target_entity")
+        if not target:
+            return
+
+        now = dt_util.now()
+        start_of_day = dt_util.start_of_local_day(now)
+        dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
+        is_switch = dev_type == DEVICE_TYPE_NETWORK_SWITCH
+
+        def _fetch_states():
+            return state_changes_during_period(
+                self.hass,
+                start_time=start_of_day,
+                end_time=now,
+                entity_id=target,
+                no_attributes=False,
+                include_start_time_state=True,
+            )
+
+        try:
+            recorder_inst = get_instance(self.hass)
+            states_by_entity = await recorder_inst.async_add_executor_job(_fetch_states)
+            states = states_by_entity.get(target, [])
+            if not states and len(states_by_entity) == 1:
+                states = list(states_by_entity.values())[0]
+
+            if not states:
+                current_state = self.hass.states.get(target)
+                if current_state:
+                    states = [current_state]
+
+            if states:
+                minutes, apps, active_app = _calculate_screen_time_from_states(
+                    states, start_of_day, now, is_switch=is_switch
+                )
+                current_mins = dev.get("screen_time_today_minutes", 0)
+                reconciled_mins = max(current_mins, minutes)
+
+                merged_apps = list(dev.get("apps_used_today", []))
+                for app in apps:
+                    if app not in merged_apps:
+                        merged_apps.append(app)
+
+                updates: dict[str, Any] = {
+                    "screen_time_today_minutes": reconciled_mins,
+                    "screen_time_date": now.strftime("%Y-%m-%d"),
+                    "apps_used_today": merged_apps,
+                }
+                if active_app != "None" or not dev.get("active_app"):
+                    updates["active_app"] = active_app
+
+                await self.storage.async_update_device(device_id, updates)
+                _LOGGER.debug(
+                    "Reconciled screen time for %s: %s mins, active: %s, apps: %s",
+                    device_id,
+                    reconciled_mins,
+                    active_app,
+                    merged_apps,
+                )
+                async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
+        except Exception as err:
+            _LOGGER.warning(
+                "Could not reconcile screen time from recorder for %s: %s",
+                device_id,
+                err,
+            )
+
+    async def async_reconcile_all_screen_time(self) -> None:
+        """Reconcile screen time from recorder for all managed devices."""
+        for dev_id in list(self.storage.get_all_devices().keys()):
+            await self.async_reconcile_device_screen_time(dev_id)
 
     def _restore_timers(self) -> None:
         """Restore active timers that survived a Home Assistant reboot."""
@@ -293,10 +477,20 @@ class PassableScreenTimeEngine:
     # =========================================================================
 
     async def async_set_device_lockout(
-        self, device_id: str, locked: bool, power_on: bool = False
+        self,
+        device_id: str,
+        locked: bool,
+        power_on: bool = False,
+        by_schedule: bool = False,
     ) -> None:
         """Set lockout state and update hardware accordingly."""
-        await self.storage.async_update_device(device_id, {"locked": locked})
+        updates: dict[str, Any] = {"locked": locked}
+        if locked:
+            updates["locked_by_schedule"] = by_schedule
+        else:
+            updates["locked_by_schedule"] = False
+
+        await self.storage.async_update_device(device_id, updates)
 
         if locked:
             # If locking, cancel any active timer
@@ -307,8 +501,11 @@ class PassableScreenTimeEngine:
                     device_id, {"timer_expires_at": None}
                 )
             await self._async_enforce_device_locked(device_id)
-        elif power_on:
-            await self._async_enforce_device_unlocked(device_id)
+        else:
+            dev = self.storage.get_device(device_id)
+            dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
+            if power_on or dev_type == DEVICE_TYPE_NETWORK_SWITCH:
+                await self._async_enforce_device_unlocked(device_id)
 
         async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
 
@@ -427,7 +624,39 @@ class PassableScreenTimeEngine:
                     start_str,
                     end_str,
                 )
-                await self.async_set_device_lockout(dev_id, locked=True)
+                await self.async_set_device_lockout(
+                    dev_id, locked=True, by_schedule=True
+                )
+            elif (
+                should_be_locked
+                and dev.get("locked", False)
+                and not dev.get("locked_by_schedule", False)
+            ):
+                # Device is locked during active schedule window; mark schedule origin
+                await self.storage.async_update_device(
+                    dev_id, {"locked_by_schedule": True}
+                )
+            elif (
+                not should_be_locked
+                and dev.get("locked", False)
+                and dev.get("locked_by_schedule", False)
+            ):
+                if self._active_restrictions:
+                    _LOGGER.debug(
+                        "Schedule ended for %s, but global restriction active. Postponing unlock.",
+                        dev_id,
+                    )
+                    continue
+
+                _LOGGER.info(
+                    "Schedule window ended for %s (%s -> %s). Auto-unlocking.",
+                    dev_id,
+                    start_str,
+                    end_str,
+                )
+                await self.async_set_device_lockout(
+                    dev_id, locked=False, power_on=False, by_schedule=False
+                )
 
     # =========================================================================
     # STATE CHANGE INTERCEPTION & TELEMETRY
@@ -461,7 +690,12 @@ class PassableScreenTimeEngine:
         if dev_type == DEVICE_TYPE_NETWORK_SWITCH:
             is_active = new_state.state == "off"  # switch off = unpaused
         else:
-            is_active = new_state.state in ["on", "playing", "idle"]
+            is_active = new_state.state not in [
+                "off",
+                "standby",
+                "unavailable",
+                "unknown",
+            ]
 
         if is_locked and is_active and device_id not in self._enforcing_devices:
             _LOGGER.warning(
@@ -513,6 +747,13 @@ class PassableScreenTimeEngine:
                     self.hass, SIGNAL_DEVICE_UPDATED, device_id
                 )
 
+        # 3. Schedule recorder reconciliation after state change
+        async def _delayed_reconcile() -> None:
+            await asyncio.sleep(2.0)
+            await self.async_reconcile_device_screen_time(device_id)
+
+        self.hass.async_create_task(_delayed_reconcile())
+
     @callback
     def _async_minute_check(self, now: datetime) -> None:
         """Every minute: accumulate screen time minutes and evaluate schedules."""
@@ -530,7 +771,12 @@ class PassableScreenTimeEngine:
 
             dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
             is_active = (
-                state_obj.state in ["on", "playing", "idle"]
+                state_obj.state not in [
+                    "off",
+                    "standby",
+                    "unavailable",
+                    "unknown",
+                ]
                 if dev_type == DEVICE_TYPE_MEDIA_PLAYER
                 else state_obj.state == "off"
             )
@@ -538,6 +784,7 @@ class PassableScreenTimeEngine:
             if is_active:
                 current_mins = dev.get("screen_time_today_minutes", 0)
                 dev["screen_time_today_minutes"] = current_mins + 1
+                dev["screen_time_date"] = dt_util.now().strftime("%Y-%m-%d")
                 has_updates = True
 
         if has_updates:
@@ -551,10 +798,12 @@ class PassableScreenTimeEngine:
     def _async_midnight_rollover(self, now: datetime) -> None:
         """Midnight rollover: reset daily screen time and apps used."""
         _LOGGER.info("Rolling over daily screen time stats at midnight")
+        today_str = now.strftime("%Y-%m-%d")
         devices = self.storage.get_all_devices()
         for dev in devices.values():
             dev["screen_time_today_minutes"] = 0
             dev["apps_used_today"] = []
+            dev["screen_time_date"] = today_str
 
         self.hass.async_create_task(self.storage.async_save())
         async_dispatcher_send(self.hass, SIGNAL_ENGINE_UPDATED)

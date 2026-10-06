@@ -82,4 +82,16 @@ delete_device:
       selector:
         text: {}
 
+reconcile_screen_time:
+  name: Reconcile Screen Time
+  description: Pulls state history directly from Home Assistant Recorder to accurately backfill and reconcile cumulative screen time and applications used today.
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the managed device (or 'all' for all devices).
+      required: false
+      default: all
+      selector:
+        text: {}
+
 

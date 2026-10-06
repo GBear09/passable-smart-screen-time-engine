@@ -23,6 +23,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_cancel_timer)
     websocket_api.async_register_command(hass, ws_set_lockout)
     websocket_api.async_register_command(hass, ws_import_legacy_helpers)
+    websocket_api.async_register_command(hass, ws_delete_device)
 
 
 def _get_engine(hass: HomeAssistant) -> Any:
@@ -218,3 +219,29 @@ async def ws_import_legacy_helpers(
     engine.async_rebuild_device_listeners()
     await engine.async_evaluate_schedules()
     connection.send_result(msg["id"], {"success": True, "imported_count": count})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "passable_smart_screen_time_engine/delete_device",
+        vol.Required("device_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_device(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a managed device from storage and clean up entities."""
+    engine = _get_engine(hass)
+    if not engine:
+        connection.send_error(
+            msg["id"], "not_found", "Passable Screen Time Engine is not loaded."
+        )
+        return
+
+    device_id = msg["device_id"]
+    await engine.async_remove_device_and_cleanup(device_id)
+    connection.send_result(msg["id"], {"success": True})
+

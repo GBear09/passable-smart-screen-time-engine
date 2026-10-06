@@ -101,13 +101,23 @@ class PassableScreenTimeOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             # Sync devices in storage
-            selected_entities = user_input.get(CONF_DEVICES, [])
+            selected_entities = set(user_input.get(CONF_DEVICES, []))
             current_devices = engine.storage.get_all_devices()
 
-            # Add newly selected devices
+            # 1. Remove devices that were unselected by the user
+            for dev_id, dev_data in list(current_devices.items()):
+                target = dev_data.get("target_entity")
+                if target not in selected_entities:
+                    await engine.async_remove_device_and_cleanup(dev_id)
+
+            # 2. Add newly selected devices
+            existing_targets = {
+                d.get("target_entity"): dev_id
+                for dev_id, d in engine.storage.get_all_devices().items()
+            }
             for entity_id in selected_entities:
-                dev_id = entity_id.split(".", 1)[-1]
-                if dev_id not in current_devices:
+                if entity_id not in existing_targets:
+                    dev_id = entity_id.split(".", 1)[-1]
                     state_obj = self.hass.states.get(entity_id)
                     name = (
                         state_obj.attributes.get("friendly_name")

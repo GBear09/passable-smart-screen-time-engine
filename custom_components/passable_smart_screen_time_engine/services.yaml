@@ -71,3 +71,15 @@ import_legacy_helpers:
   name: Import Legacy Helpers
   description: Scans Home Assistant for legacy device lockout input_text and input_boolean helpers and migrates them into native .storage.
 
+delete_device:
+  name: Delete Managed Device
+  description: Permanently removes a device from the Screen Time Engine and cleans up its associated entities.
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the device to delete (e.g., living_room_tv_2).
+      required: true
+      selector:
+        text: {}
+
+

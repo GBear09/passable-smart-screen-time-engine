@@ -11,7 +11,7 @@ const html = LitElement.prototype.html;
 const css = LitElement.prototype.css;
 
 console.info(
-  "%c PASSABLE-SCREEN-TIME-CARD %c v1.0.0 ",
+  "%c PASSABLE-SCREEN-TIME-CARD %c v1.1.2 ",
   "color: white; background: #0284c7; font-weight: bold; padding: 2px 6px; border-radius: 4px 0 0 4px;",
   "color: #0284c7; background: #e0f2fe; font-weight: bold; padding: 2px 6px; border-radius: 0 4px 4px 0;"
 );
@@ -169,6 +169,24 @@ class PassableScreenTimeCard extends LitElement {
       schedule_anchor_date: this._localSchedAnchorDate,
     });
     this._fetchData();
+  }
+
+  async _deleteDevice(deviceId) {
+    const dev = this._backendData.devices[deviceId];
+    const devName = dev?.name || deviceId;
+    if (!confirm(`Are you sure you want to remove "${devName}" from the Screen Time Engine?`)) {
+      return;
+    }
+    try {
+      await this.hass.callWS({
+        type: "passable_smart_screen_time_engine/delete_device",
+        device_id: deviceId,
+      });
+      this._editingDeviceId = null;
+      await this._fetchData();
+    } catch (e) {
+      console.error("Failed to delete device:", e);
+    }
   }
 
   _toggleDay(day) {
@@ -627,6 +645,17 @@ class PassableScreenTimeCard extends LitElement {
               </div>
             `
           )}
+
+          <!-- REMOVE DEVICE BUTTON -->
+          <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--divider-color, rgba(0,0,0,0.06)); text-align: center;">
+            <button
+              class="outline-danger-btn"
+              style="width: 100%; justify-content: center;"
+              @click=${() => this._deleteDevice(this._editingDeviceId)}
+            >
+              ${Icons.Trash} Remove Device from Engine
+            </button>
+          </div>
         </div>
       </div>
     `;

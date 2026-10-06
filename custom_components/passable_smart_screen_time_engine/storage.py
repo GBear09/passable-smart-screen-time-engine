@@ -68,7 +68,7 @@ class PassableScreenTimeStorage:
         }
 
     async def async_load(self) -> dict[str, Any]:
-        """Load persisted data from disk."""
+        """Load persisted data from disk and perform migration cleanup."""
         stored = await self._store.async_load()
         if stored:
             self.data = stored
@@ -76,6 +76,57 @@ class PassableScreenTimeStorage:
                 self.data["devices"] = {}
             if "global_restrictions" not in self.data:
                 self.data["global_restrictions"] = []
+
+        # Automatic migration & cleanup of legacy/accidental entries
+        modified = False
+        devices = self.data.setdefault("devices", {})
+
+        # 1. Clean up speaker devices or MA virtual players imported by accident
+        for dev_id, dev in list(devices.items()):
+            target = dev.get("target_entity", "")
+            st_state = self.hass.states.get(target) if target else None
+            is_speaker = (
+                any(k in target for k in ("speaker", "_speaker_ma", "_ma", "google_cast"))
+                or (st_state and (
+                    st_state.attributes.get("device_class") == "speaker"
+                    or st_state.attributes.get("mass_player_type") is not None
+                    or st_state.attributes.get("app_id") == "music_assistant"
+                ))
+            )
+            if is_speaker:
+                _LOGGER.info("Cleaning up legacy speaker entry from storage: %s (%s)", dev_id, target)
+                del devices[dev_id]
+                modified = True
+
+        # 2. Normalize and deduplicate devices targeting the same entity
+        seen_targets: dict[str, str] = {}
+        for dev_id, dev in list(devices.items()):
+            target = dev.get("target_entity")
+            if not target:
+                continue
+            canonical_slug = target.split(".", 1)[-1]
+            if target in seen_targets:
+                existing_dev_id = seen_targets[target]
+                if dev_id == canonical_slug and existing_dev_id != canonical_slug:
+                    del devices[existing_dev_id]
+                    seen_targets[target] = dev_id
+                    modified = True
+                else:
+                    del devices[dev_id]
+                    modified = True
+            else:
+                if dev_id != canonical_slug and canonical_slug not in devices:
+                    devices[canonical_slug] = dev
+                    dev["device_id"] = canonical_slug
+                    del devices[dev_id]
+                    seen_targets[target] = canonical_slug
+                    modified = True
+                else:
+                    seen_targets[target] = dev_id
+
+        if modified:
+            await self.async_save()
+
         _LOGGER.info(
             "Loaded Passable Screen Time storage with %s managed devices",
             len(self.data.get("devices", {})),
@@ -143,32 +194,53 @@ class PassableScreenTimeStorage:
             # Resolve target entity
             target_entity = None
 
-            # 1. Preserve existing target entity if already configured in storage
-            if dev_id in self.data.get("devices", {}) and self.data["devices"][dev_id].get("target_entity"):
-                target_entity = self.data["devices"][dev_id]["target_entity"]
+            # 1. Preserve existing target entity ONLY if valid and not a speaker / MA player
+            if dev_id in self.data.get("devices", {}):
+                stored_target = self.data["devices"][dev_id].get("target_entity")
+                if stored_target:
+                    st_state = self.hass.states.get(stored_target)
+                    is_bad = (
+                        any(k in stored_target for k in ("speaker", "echo", "dot", "_ma", "google_cast"))
+                        or (st_state and (
+                            st_state.attributes.get("device_class") == "speaker"
+                            or st_state.attributes.get("mass_player_type") is not None
+                            or st_state.attributes.get("app_id") == "music_assistant"
+                        ))
+                    )
+                    if not is_bad:
+                        target_entity = stored_target
 
-            # 2. Check media_players (prioritize actual TVs, ignore speakers and MA virtual players)
+            # 2. Check media_players (strictly exclude speakers & Music Assistant players; prioritize device_class == "tv")
             if not target_entity:
                 mp_candidates = [
                     mp for mp in self.hass.states.async_entity_ids("media_player")
                     if dev_id in mp
                 ]
-                tv_candidates = [
-                    mp for mp in mp_candidates
-                    if "tv" in mp and not any(k in mp for k in ("speaker", "echo", "dot", "_ma"))
+                filtered_mps = []
+                for mp in mp_candidates:
+                    if any(k in mp for k in ("speaker", "echo", "dot", "_ma", "google_cast")):
+                        continue
+                    st = self.hass.states.get(mp)
+                    if st and (
+                        st.attributes.get("device_class") == "speaker"
+                        or st.attributes.get("mass_player_type") is not None
+                        or st.attributes.get("app_id") == "music_assistant"
+                    ):
+                        continue
+                    filtered_mps.append(mp)
+
+                tv_class_candidates = [
+                    mp for mp in filtered_mps
+                    if self.hass.states.get(mp) and self.hass.states.get(mp).attributes.get("device_class") == "tv"
                 ]
-                if tv_candidates:
+                if tv_class_candidates:
                     active_tvs = [
-                        mp for mp in tv_candidates
-                        if self.hass.states.get(mp) and self.hass.states.get(mp).state not in ("unavailable", "unknown")
+                        mp for mp in tv_class_candidates
+                        if self.hass.states.get(mp).state not in ("unavailable", "unknown")
                     ]
-                    target_entity = active_tvs[0] if active_tvs else sorted(tv_candidates, reverse=True)[0]
-                elif mp_candidates:
-                    non_speakers = [
-                        mp for mp in mp_candidates
-                        if not any(k in mp for k in ("speaker", "echo", "dot", "_ma"))
-                    ]
-                    target_entity = non_speakers[0] if non_speakers else mp_candidates[0]
+                    target_entity = active_tvs[0] if active_tvs else sorted(tv_class_candidates, reverse=True)[0]
+                elif filtered_mps:
+                    target_entity = sorted(filtered_mps, reverse=True)[0]
 
             # 3. Check switches (e.g. personal tablets, network pause)
             if not target_entity:
@@ -179,6 +251,9 @@ class PassableScreenTimeStorage:
 
             if not target_entity:
                 target_entity = f"media_player.{dev_id}"
+
+            # Standardize device key by target entity slug
+            final_dev_id = target_entity.split(".", 1)[-1]
 
             # Check toggles
             toggle_id = f"input_boolean.device_lockout_toggle_{dev_id}"
@@ -223,8 +298,17 @@ class PassableScreenTimeStorage:
                 if fn:
                     friendly_name = fn
 
+            # Remove any stale device entries targeting this entity or under old raw room slug
+            devices = self.data.setdefault("devices", {})
+            for existing_id, existing_dev in list(devices.items()):
+                if existing_id != final_dev_id and (
+                    existing_dev.get("target_entity") == target_entity
+                    or existing_id == dev_id
+                ):
+                    del devices[existing_id]
+
             device_payload = get_default_device_data(
-                device_id=dev_id, target_entity=target_entity, name=friendly_name
+                device_id=final_dev_id, target_entity=target_entity, name=friendly_name
             )
             device_payload.update(
                 {
@@ -236,11 +320,11 @@ class PassableScreenTimeStorage:
                 }
             )
 
-            self.data.setdefault("devices", {})[dev_id] = device_payload
+            devices[final_dev_id] = device_payload
             imported_count += 1
             _LOGGER.info(
                 "Imported legacy lockout configuration for %s (%s)",
-                dev_id,
+                final_dev_id,
                 target_entity,
             )
 

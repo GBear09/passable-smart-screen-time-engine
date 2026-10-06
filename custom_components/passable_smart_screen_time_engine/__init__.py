@@ -108,12 +108,16 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Passable Smart Screen Time Engine from a config entry."""
     storage = PassableScreenTimeStorage(hass)
-    engine = PassableScreenTimeEngine(hass, storage)
+    engine = PassableScreenTimeEngine(hass, storage, entry.entry_id)
 
     await engine.async_setup()
 
-    # Populate any explicitly selected devices from config flow
-    selected_devices = entry.data.get(CONF_DEVICES, [])
+    # Populate any explicitly selected devices from options/config flow
+    selected_devices = (
+        entry.options.get(CONF_DEVICES)
+        if CONF_DEVICES in entry.options
+        else entry.data.get(CONF_DEVICES, [])
+    )
     for entity_id in selected_devices:
         dev_id = entity_id.split(".", 1)[-1]
         if dev_id not in storage.get_all_devices():
@@ -127,19 +131,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await storage.async_update_device(dev_id, payload)
 
     # Populate any global restrictions
-    restrictions = [
-        {"entity": e}
-        for e in entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
-    ]
+    restrictions_list = (
+        entry.options.get(CONF_GLOBAL_RESTRICTIONS)
+        if CONF_GLOBAL_RESTRICTIONS in entry.options
+        else entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
+    )
+    restrictions = [{"entity": e} for e in restrictions_list]
     if restrictions:
         await storage.async_update_global_restrictions(restrictions)
 
-    # Automatically import legacy helpers if selected during initial config flow
-    if entry.data.get("import_helpers", False):
+    # Automatically import legacy helpers ONLY once on initial setup if selected
+    if entry.data.get("import_helpers", False) and not storage.data.get("legacy_imported"):
         try:
             await engine.storage.async_import_legacy_helpers()
+            storage.data["legacy_imported"] = True
+            await storage.async_save()
         except Exception as err:
             _LOGGER.warning("Could not auto-import legacy helpers: %s", err)
+
+    # Clean up any orphaned entities from entity registry that no longer correspond to managed devices
+    active_device_ids = set(storage.get_all_devices().keys())
+    try:
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(hass)
+        orphans = [
+            entity_id
+            for entity_id, reg_entry in ent_reg.entities.items()
+            if reg_entry.config_entry_id == entry.entry_id
+            and reg_entry.unique_id != f"{DOMAIN}_master_lockout"
+            and not any(
+                reg_entry.unique_id.endswith(f"_{did}")
+                for did in active_device_ids
+            )
+        ]
+        for oid in orphans:
+            _LOGGER.info("Cleaning up orphan entity from registry: %s", oid)
+            ent_reg.async_remove(oid)
+    except Exception as err:
+        _LOGGER.warning("Could not clean up orphan entities: %s", err)
 
     engine.async_rebuild_device_listeners()
     await engine.async_evaluate_schedules()
@@ -224,6 +253,10 @@ def _async_register_services(
         ),
     )
 
+    async def handle_delete_device(call: ServiceCall) -> None:
+        device_id = call.data["device_id"]
+        await engine.async_remove_device_and_cleanup(device_id)
+
     hass.services.async_register(
         DOMAIN,
         "toggle_all_lockouts",
@@ -232,6 +265,13 @@ def _async_register_services(
 
     hass.services.async_register(
         DOMAIN, "import_legacy_helpers", handle_import_legacy_helpers
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "delete_device",
+        handle_delete_device,
+        schema=vol.Schema({vol.Required("device_id"): cv.string}),
     )
 
 

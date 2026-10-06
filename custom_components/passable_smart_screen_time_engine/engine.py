@@ -73,10 +73,16 @@ def _is_biweekly_active_this_week(anchor_date_str: str | None) -> bool:
 class PassableScreenTimeEngine:
     """Engine coordinating device lockouts, countdown timers, schedules, and screen time telemetry."""
 
-    def __init__(self, hass: HomeAssistant, storage: PassableScreenTimeStorage) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        storage: PassableScreenTimeStorage,
+        entry_id: str | None = None,
+    ) -> None:
         """Initialize engine."""
         self.hass = hass
         self.storage = storage
+        self.entry_id = entry_id
         self._timer_unsubs: dict[str, CALLBACK_TYPE] = {}
         self._unsub_callbacks: list[CALLBACK_TYPE] = []
         self._device_state_listeners: list[CALLBACK_TYPE] = []
@@ -518,6 +524,44 @@ class PassableScreenTimeEngine:
 
         self.hass.async_create_task(self.storage.async_save())
         async_dispatcher_send(self.hass, SIGNAL_ENGINE_UPDATED)
+
+    async def async_remove_device_and_cleanup(self, device_id: str) -> None:
+        """Remove a device from storage, cancel timers, unsubscribe listeners, and delete HA entities."""
+        _LOGGER.info("Permanently removing device %s from screen time engine", device_id)
+        # 1. Cancel timer if active
+        self.async_cancel_device_timer(device_id)
+
+        # 2. Remove from storage
+        await self.storage.async_remove_device(device_id)
+
+        # 3. Clean up from HA entity registry
+        if self.entry_id:
+            try:
+                from homeassistant.helpers import entity_registry as er
+                ent_reg = er.async_get(self.hass)
+                to_remove = [
+                    entity_id
+                    for entity_id, reg_entry in ent_reg.entities.items()
+                    if reg_entry.config_entry_id == self.entry_id
+                    and (
+                        reg_entry.unique_id.endswith(f"_{device_id}")
+                        or reg_entry.unique_id == f"passable_screen_time_lockout_{device_id}"
+                        or reg_entry.unique_id == f"passable_screen_time_schedule_{device_id}"
+                        or reg_entry.unique_id == f"passable_screen_time_usage_{device_id}"
+                        or reg_entry.unique_id == f"passable_screen_time_app_{device_id}"
+                        or reg_entry.unique_id == f"passable_screen_time_schedule_active_{device_id}"
+                    )
+                ]
+                for eid in to_remove:
+                    _LOGGER.info("Removing entity %s for deleted device %s", eid, device_id)
+                    ent_reg.async_remove(eid)
+            except Exception as err:
+                _LOGGER.warning("Error cleaning up entities for device %s: %s", device_id, err)
+
+        # 4. Rebuild listeners and notify listeners
+        self.async_rebuild_device_listeners()
+        async_dispatcher_send(self.hass, SIGNAL_ENGINE_UPDATED)
+        async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
 
     async def async_unload(self) -> None:
         """Cancel all registered listeners and timers on unload."""

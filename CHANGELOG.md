@@ -2,6 +2,21 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.1.2] - 2026-10-05
+
+### 🐛 Fixed
+- **Synchronized Entity Removals in Options Flow**: Deselecting devices in the integration options flow now properly and permanently removes them from `.storage` and automatically cleans up their associated entities from Home Assistant's Entity Registry.
+- **Strict Speaker & Virtual Player Exclusion**: Filtered out all `device_class: speaker`, `mass_player_type`, and virtual Music Assistant entities during legacy helper migration to prevent unwanted audio players (e.g. Master Bedroom Speaker MA, Living Room TV MA) from being mapped instead of actual televisions.
+- **Standardized Canonical Device Keying**: Standardized internal device IDs by target entity slug (`living_room_tv_2`, `office_tv_2`, `master_bedroom_tv`) across both legacy migration and manual selection, eliminating duplicate tiles.
+- **Automatic Migration & Duplicate Sanitization**: On load, `.storage` automatically identifies and purges stale speaker entries and duplicate device keys targeting the same hardware device.
+- **Orphan Entity Cleanup on Reload**: When managed devices are removed, any lingering entities in Home Assistant are automatically deregistered from the Entity Registry.
+- **Guarded Helper Auto-Import**: Auto-import now runs only once on initial setup so subsequent configuration reloads never resurrect previously deleted devices.
+
+### ✨ Added
+- **Delete Device Action & Service**: Added `passable_smart_screen_time_engine.delete_device` service action and WebSocket command `passable_smart_screen_time_engine/delete_device` for 1-click device removal.
+- **Card UI Device Removal**: Added "Remove Device from Engine" button to the card's edit dialog to delete devices directly from the Lovelace card.
+
+
 ## [1.1.1] - 2026-10-05
 
 ### 🐛 Fixed

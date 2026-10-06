@@ -158,7 +158,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entity_id
             for entity_id, reg_entry in ent_reg.entities.items()
             if reg_entry.config_entry_id == entry.entry_id
-            and reg_entry.unique_id != f"{DOMAIN}_master_lockout"
+            and reg_entry.unique_id not in (
+                f"{DOMAIN}_master_lockout",
+                f"{DOMAIN}_active_device_lockouts",
+            )
             and not any(
                 reg_entry.unique_id.endswith(f"_{did}")
                 for did in active_device_ids

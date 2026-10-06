@@ -87,6 +87,7 @@ class PassableScreenTimeEngine:
         self._unsub_callbacks: list[CALLBACK_TYPE] = []
         self._device_state_listeners: list[CALLBACK_TYPE] = []
         self._enforcing_devices: set[str] = set()
+        self._active_restrictions: set[str] = set()
 
     async def async_setup(self) -> None:
         """Initialize engine, restore timers, attach listeners and schedule evaluations."""
@@ -178,6 +179,39 @@ class PassableScreenTimeEngine:
                 self.hass, target_entities, self._async_handle_device_state_change
             )
             self._device_state_listeners.append(unsub)
+
+        # Track global household restrictions (e.g. potty request)
+        restriction_entities = [
+            r.get("entity")
+            for r in self.storage.get_global_restrictions()
+            if r.get("entity")
+        ]
+        if restriction_entities:
+            self._active_restrictions = {
+                e
+                for e in restriction_entities
+                if self.hass.states.get(e) and self.hass.states.get(e).state == "on"
+            }
+            unsub_restr = async_track_state_change_event(
+                self.hass, restriction_entities, self._async_handle_restriction_state_change
+            )
+            self._device_state_listeners.append(unsub_restr)
+
+    @callback
+    def _async_handle_restriction_state_change(self, event: Any) -> None:
+        """Handle state changes in global restrictions."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        if not entity_id or not new_state:
+            return
+
+        if new_state.state == "on":
+            self._active_restrictions.add(entity_id)
+        else:
+            self._active_restrictions.discard(entity_id)
+
+        async_dispatcher_send(self.hass, SIGNAL_ENGINE_UPDATED)
+        self.hass.async_create_task(self.async_evaluate_schedules())
 
     # =========================================================================
     # COUNTDOWN TIMER ACTIONS ("One More Show")

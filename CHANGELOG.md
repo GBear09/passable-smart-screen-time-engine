@@ -2,6 +2,33 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.2.0] - 2026-10-05
+
+### ✨ Added & Redesigned (Smart Lock Engine Design Parity)
+- **Unified Design System**: Completely rebuilt `passable-screen-time-card.js` with the exact visual styling, colors, CSS variables, and layout structure of the Passable Smart Lock Engine card (`passable-lock-manager-card.js`).
+- **Hero Device Cards (`.doors-grid` & `.door-card`)**:
+  - Colored left-border accents: Green (`var(--success-color, #4caf50)`) for permitted viewing, Orange (`var(--warning-color, #ff9800)`) for restricted screen time.
+  - Circular icon wrapper (`.door-icon-wrapper`) with TV/tablet icons and power active glow indicator.
+  - Telemetry sublines showing today's screen time, active streaming app badges, and daily limit progress bars.
+  - Header pills matching smart lock diagnostics: Countdown timer pills (`.battery-pill.warning`) and daily screen time status pills (`.battery-pill.good`/`.warning`/`.critical`).
+  - Full-width `.door-toggle-btn.btn-locked` and `.btn-unlocked` action buttons with dedicated icon boxes, bold action labels ("Restricted (Locked)" / "Permitted (Unlocked)"), and intuitive sub-labels.
+  - Quick secondary action buttons for immediate device power toggle and settings drawer access.
+- **Card Header & Global Status**:
+  - Engine badge (`.engine-badge.native`) labeled `SCREEN TIME HUB`.
+  - Global status pill (`.status-pill.locked` / `.status-pill.unlocked`) showing real-time restricted device counts.
+  - Master action button (`.lock-all-btn`) to permit or restrict all screens with a single tap.
+- **Household Restrictions Section**: Interactive restriction pills with glowing status indicators for active downtime/bedtime automations.
+- **24-Hour Screen Time Activity Breakdown (`.activity-section`)**:
+  - Timeline filter pills to switch between "All Screens" and individual devices.
+  - Continuous device usage bars comparing screen time against configured daily limits.
+  - Collapsible recent activity feed (`.activity-expand-bar` and `.event-feed-container`) tracking streaming applications, lockout state changes, and timer sessions.
+- **Enhanced Edit Drawer**:
+  - Modern header with back button and real-time status.
+  - Live timer banner with active countdown and one-tap cancellation.
+  - Material 3 switches (`.toggle-switch` & `.toggle-knob`) for manual lockout and power control.
+  - Collapsible accordion sections (`.section`) for Screen Time Limits, Viewing Timer ("One More Show" with presets), Downtime Schedule (with circular day chips and bi-weekly recurrence), and Device Management.
+- **Visual Dashboard Editor**: Added `passable-screen-time-card-editor` for visual configuration in the Lovelace UI.
+
 ## [1.1.2] - 2026-10-05
 
 ### 🐛 Fixed

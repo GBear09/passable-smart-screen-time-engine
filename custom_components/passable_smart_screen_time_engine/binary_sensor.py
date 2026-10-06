@@ -15,7 +15,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATED, SIGNAL_STORAGE_UPDATED
+from .const import (
+    DOMAIN,
+    SIGNAL_DEVICE_UPDATED,
+    SIGNAL_ENGINE_UPDATED,
+    SIGNAL_STORAGE_UPDATED,
+)
 from .engine import PassableScreenTimeEngine
 
 _LOGGER = logging.getLogger(__name__)

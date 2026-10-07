@@ -629,7 +629,7 @@ class PassableScreenTimeCard extends LitElement {
         <div class="door-action-row">
           <button
             class="door-toggle-btn ${isLocked ? 'btn-unlocked' : 'btn-locked'}"
-            @click=${() => this._setLockout(did, !isLocked, isLocked)}
+            @click=${() => this._setLockout(did, !isLocked, false)}
             title="${isLocked ? 'Tap to permit screen time' : 'Tap to lock screen'}"
           >
             <div class="btn-icon">
@@ -967,7 +967,7 @@ class PassableScreenTimeCard extends LitElement {
           <div class="settings-list">
             <div
               class="toggle-row"
-              @click=${() => this._setLockout(did, !isLocked, isLocked)}
+              @click=${() => this._setLockout(did, !isLocked, false)}
             >
               <div class="toggle-info">
                 <div style="color: ${isLocked ? 'var(--warning-color, #ff9800)' : 'var(--success-color, #4caf50)'};">

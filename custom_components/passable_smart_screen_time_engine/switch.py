@@ -52,7 +52,7 @@ class PassableLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.0",
+            sw_version="1.4.1",
         )
 
     @property
@@ -112,7 +112,7 @@ class PassableScheduleSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.0",
+            sw_version="1.4.1",
         )
 
     @property
@@ -175,7 +175,7 @@ class PassableMasterLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.0",
+            sw_version="1.4.1",
         )
 
     @property

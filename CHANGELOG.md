@@ -2,6 +2,12 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.1] - 2026-10-07
+
+### 🐛 Fixed
+- **Prevent Unwanted Auto-Power-On When Unlocking Screens**: Fixed an issue where unlocking a TV or media player from the dashboard card or settings drawer passed `power_on = true`, automatically sending `media_player.turn_on` to the hardware. Unlocking now cleanly permits viewing access (`power_on = false`) without forcing the physical display on, preventing unexpected screen activations and hardware power desync issues. Dedicated power toggle buttons remain available on the card for intentional power control.
+- **Network Switches Retain Auto-Unpause**: Unlocking devices controlled via network switches (such as Wi-Fi pause switches) continues to automatically unpause internet access upon unlock.
+
 ## [1.4.0] - 2026-10-06
 
 ### ✨ Added

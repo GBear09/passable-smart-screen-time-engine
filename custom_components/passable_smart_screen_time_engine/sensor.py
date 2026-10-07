@@ -72,7 +72,7 @@ class PassableScreenTimeUsageSensor(SensorEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.0",
+            sw_version="1.4.1",
         )
 
     @property
@@ -165,7 +165,7 @@ class PassableScreenTimeAppSensor(SensorEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.0",
+            sw_version="1.4.1",
         )
 
     @property

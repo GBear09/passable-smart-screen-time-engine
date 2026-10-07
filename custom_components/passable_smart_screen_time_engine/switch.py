@@ -52,7 +52,7 @@ class PassableLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.1",
+            sw_version="1.4.2",
         )
 
     @property
@@ -112,7 +112,7 @@ class PassableScheduleSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.1",
+            sw_version="1.4.2",
         )
 
     @property
@@ -127,6 +127,7 @@ class PassableScheduleSwitch(SwitchEntity):
             self.device_id, {"schedule_enabled": True}
         )
         self.async_write_ha_state()
+        await self.engine.async_evaluate_schedules()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable schedule engine."""
@@ -134,6 +135,7 @@ class PassableScheduleSwitch(SwitchEntity):
             self.device_id, {"schedule_enabled": False}
         )
         self.async_write_ha_state()
+        await self.engine.async_evaluate_schedules()
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to dispatcher signals."""
@@ -175,7 +177,7 @@ class PassableMasterLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.1",
+            sw_version="1.4.2",
         )
 
     @property

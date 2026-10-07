@@ -480,14 +480,37 @@ class PassableScreenTimeEngine:
             del self._timer_unsubs[device_id]
 
         await self.storage.async_update_device(
-            device_id, {"timer_expires_at": None, "locked": True}
+            device_id, {"timer_expires_at": None}
         )
-        await self._async_enforce_device_locked(device_id)
-        async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
+        await self.async_set_device_lockout(device_id, locked=True, power_on=False)
 
     # =========================================================================
     # LOCKOUT & POWER CONTROL
     # =========================================================================
+
+    def is_device_in_schedule_window(self, dev: dict[str, Any]) -> bool:
+        """Check if device is currently scheduled and inside an active downtime window."""
+        if not dev.get("schedule_enabled", False):
+            return False
+
+        recurrence = dev.get("schedule_recurrence", "weekly")
+        if recurrence == RECURRENCE_BIWEEKLY:
+            anchor = dev.get("schedule_anchor_date")
+            if not _is_biweekly_active_this_week(anchor):
+                return False
+
+        now = dt_util.now()
+        current_time = now.time()
+        weekday_idx = (now.weekday() + 1) % 7
+        current_day = DAYS_OF_WEEK[weekday_idx]
+        active_days = dev.get("schedule_days", [])
+
+        if current_day not in active_days:
+            return False
+
+        start_str = dev.get("schedule_start", "08:00")
+        end_str = dev.get("schedule_end", "20:00")
+        return _is_time_in_range(start_str, end_str, current_time)
 
     async def async_set_device_lockout(
         self,
@@ -498,10 +521,22 @@ class PassableScreenTimeEngine:
     ) -> None:
         """Set lockout state and update hardware accordingly."""
         updates: dict[str, Any] = {"locked": locked}
+        dev = self.storage.get_device(device_id)
+
         if locked:
             updates["locked_by_schedule"] = by_schedule
+            updates["manual_unlock_override"] = False
         else:
             updates["locked_by_schedule"] = False
+            # If unlocking manually while an active schedule window is running, set manual override
+            if not by_schedule and self.is_device_in_schedule_window(dev):
+                updates["manual_unlock_override"] = True
+                _LOGGER.info(
+                    "Manual unlock override enabled for %s during active schedule window. Device will remain unlocked.",
+                    device_id,
+                )
+            else:
+                updates["manual_unlock_override"] = False
 
         await self.storage.async_update_device(device_id, updates)
 
@@ -515,7 +550,6 @@ class PassableScreenTimeEngine:
                 )
             await self._async_enforce_device_locked(device_id)
         else:
-            dev = self.storage.get_device(device_id)
             dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
             if power_on or dev_type == DEVICE_TYPE_NETWORK_SWITCH:
                 await self._async_enforce_device_unlocked(device_id)
@@ -607,6 +641,20 @@ class PassableScreenTimeEngine:
 
         for dev_id, dev in devices.items():
             if not dev.get("schedule_enabled", False):
+                # Schedule is disabled; clear manual override if set
+                if dev.get("manual_unlock_override", False):
+                    await self.storage.async_update_device(
+                        dev_id, {"manual_unlock_override": False}
+                    )
+                # If device was locked by schedule, and schedule is now disabled, auto-unlock it
+                if dev.get("locked", False) and dev.get("locked_by_schedule", False):
+                    _LOGGER.info(
+                        "Schedule disabled for %s while locked by schedule. Auto-unlocking.",
+                        dev_id,
+                    )
+                    await self.async_set_device_lockout(
+                        dev_id, locked=False, power_on=False, by_schedule=False
+                    )
                 continue
 
             # Don't override an active timer
@@ -631,6 +679,15 @@ class PassableScreenTimeEngine:
 
             # Auto-lock if schedule began
             if should_be_locked and not dev.get("locked", False):
+                if dev.get("manual_unlock_override", False):
+                    _LOGGER.debug(
+                        "Manual unlock override active for %s during schedule window (%s -> %s). Skipping lock.",
+                        dev_id,
+                        start_str,
+                        end_str,
+                    )
+                    continue
+
                 _LOGGER.info(
                     "Schedule window started for %s (%s -> %s). Locking.",
                     dev_id,
@@ -669,6 +726,15 @@ class PassableScreenTimeEngine:
                 )
                 await self.async_set_device_lockout(
                     dev_id, locked=False, power_on=False, by_schedule=False
+                )
+            elif not should_be_locked and dev.get("manual_unlock_override", False):
+                # Active schedule window ended; clear manual override flag for next cycle
+                _LOGGER.debug(
+                    "Schedule window ended for %s. Resetting manual_unlock_override.",
+                    dev_id,
+                )
+                await self.storage.async_update_device(
+                    dev_id, {"manual_unlock_override": False}
                 )
 
     # =========================================================================

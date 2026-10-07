@@ -38,6 +38,7 @@ def get_default_device_data(
         ),
         "locked": False,
         "locked_by_schedule": False,
+        "manual_unlock_override": False,
         "schedule_enabled": True,
         "schedule_recurrence": RECURRENCE_WEEKLY,
         "schedule_days": list(DAYS_OF_WEEK),
@@ -128,7 +129,7 @@ class PassableScreenTimeStorage:
                 else:
                     seen_targets[target] = dev_id
 
-        # 3. Ensure track_screen_time and daily_limit_enabled exist for all devices
+        # 3. Ensure track_screen_time, daily_limit_enabled, and manual_unlock_override exist for all devices
         for dev_id, dev in devices.items():
             is_sw = (
                 dev.get("device_type") == DEVICE_TYPE_NETWORK_SWITCH
@@ -146,6 +147,9 @@ class PassableScreenTimeStorage:
                 modified = True
             if "screen_time_entity" not in dev:
                 dev["screen_time_entity"] = None
+                modified = True
+            if "manual_unlock_override" not in dev:
+                dev["manual_unlock_override"] = False
                 modified = True
 
         if modified:

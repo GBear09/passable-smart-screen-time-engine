@@ -3,10 +3,10 @@
  * Part of the Passable Suite by GBear09
  * https://github.com/GBear09/passable-smart-screen-time-engine
  * 
- * Version 1.2.0 - Full UI, color, layout & design parity with Passable Smart Lock Engine
+ * Version 1.4.2 - Instant save for toggles & manual unlock override parity
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.4.2";
 
 const LitElement = Object.getPrototypeOf(
   customElements.get("ha-panel-lovelace") ||
@@ -325,6 +325,51 @@ class PassableScreenTimeCard extends LitElement {
       await this._fetchData();
     } catch (e) {
       console.error("Failed to delete device:", e);
+    }
+  }
+
+  async _toggleScheduleEnabled(deviceId) {
+    this._localSchedEnabled = !this._localSchedEnabled;
+    this.requestUpdate();
+    try {
+      await this.hass.callWS({
+        type: "passable_smart_screen_time_engine/save_device",
+        device_id: deviceId,
+        schedule_enabled: Boolean(this._localSchedEnabled),
+      });
+      await this._fetchData();
+    } catch (e) {
+      console.error("Failed to toggle schedule enabled:", e);
+    }
+  }
+
+  async _toggleTrackScreenTime(deviceId) {
+    this._localTrackScreenTime = !this._localTrackScreenTime;
+    this.requestUpdate();
+    try {
+      await this.hass.callWS({
+        type: "passable_smart_screen_time_engine/save_device",
+        device_id: deviceId,
+        track_screen_time: Boolean(this._localTrackScreenTime),
+      });
+      await this._fetchData();
+    } catch (e) {
+      console.error("Failed to toggle track screen time:", e);
+    }
+  }
+
+  async _toggleDailyLimitEnabled(deviceId) {
+    this._localDailyLimitEnabled = !this._localDailyLimitEnabled;
+    this.requestUpdate();
+    try {
+      await this.hass.callWS({
+        type: "passable_smart_screen_time_engine/save_device",
+        device_id: deviceId,
+        daily_limit_enabled: Boolean(this._localDailyLimitEnabled),
+      });
+      await this._fetchData();
+    } catch (e) {
+      console.error("Failed to toggle daily limit enabled:", e);
     }
   }
 
@@ -1016,10 +1061,7 @@ class PassableScreenTimeCard extends LitElement {
               <div
                 class="toggle-row no-border no-pad"
                 style="margin-bottom: 12px; cursor: pointer;"
-                @click=${() => {
-                  this._localTrackScreenTime = !this._localTrackScreenTime;
-                  this.requestUpdate();
-                }}
+                @click=${() => this._toggleTrackScreenTime(did)}
               >
                 <div>
                   <div class="toggle-title">Track Screen Time</div>
@@ -1040,10 +1082,7 @@ class PassableScreenTimeCard extends LitElement {
                     <div
                       class="toggle-row no-border no-pad"
                       style="margin-bottom: 14px; padding-top: 10px; border-top: 1px solid var(--divider-color, rgba(255,255,255,0.08)); cursor: pointer;"
-                      @click=${() => {
-                        this._localDailyLimitEnabled = !this._localDailyLimitEnabled;
-                        this.requestUpdate();
-                      }}
+                      @click=${() => this._toggleDailyLimitEnabled(did)}
                     >
                       <div>
                         <div class="toggle-title">Daily Screen Time Limit</div>
@@ -1237,7 +1276,7 @@ class PassableScreenTimeCard extends LitElement {
             html`
               <div
                 class="toggle-row no-border no-pad"
-                @click=${() => (this._localSchedEnabled = !this._localSchedEnabled)}
+                @click=${() => this._toggleScheduleEnabled(did)}
               >
                 <div class="toggle-title">Enable Schedule</div>
                 <div class="toggle-switch ${this._localSchedEnabled ? 'active' : ''}">

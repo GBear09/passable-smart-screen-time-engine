@@ -2,6 +2,14 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.2] - 2026-10-07
+
+### 🐛 Fixed & Improved
+- **Manual Unlock Override During Active Downtime Windows**: When a parent manually unlocks a device during scheduled downtime (via the dashboard card or the Home Assistant lockout switch), the schedule engine now recognizes this explicit action and preserves the unlocked state with a `manual_unlock_override` flag instead of re-locking the device on the next 60-second minute check. The override is automatically reset once the scheduled downtime window concludes (or if the device is manually locked again), ensuring normal schedule operations resume for the next schedule cycle.
+- **Auto-Unlock When Downtime Schedule Is Disabled**: Disabling the schedule engine for a device that was locked by schedule now immediately evaluates and releases the lockout.
+- **Immediate State Persistence on Card Drawer Toggles**: Toggling "Enable Schedule", "Track Screen Time", or "Daily Screen Time Limit" in the device drawer now takes immediate effect and updates backend storage without requiring the user to tap "Save Changes". The "Save Changes" button remains dedicated to saving draft numeric and schedule schedule parameters (times, days, limits).
+- **Immediate Evaluation on Home Assistant Schedule Switch**: Toggling `switch.<device>_schedule_engine` in Home Assistant now immediately evaluates schedules across the integration.
+
 ## [1.4.1] - 2026-10-07
 
 ### 🐛 Fixed

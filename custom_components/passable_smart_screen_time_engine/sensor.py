@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import homeassistant.util.dt as dt_util
 
@@ -53,7 +54,7 @@ async def async_setup_entry(
 class PassableScreenTimeUsageSensor(SensorEntity):
     """Sensor reporting today's cumulative screen time minutes and countdown timer metadata."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = "min"
@@ -66,20 +67,35 @@ class PassableScreenTimeUsageSensor(SensorEntity):
         self._attr_unique_id = f"passable_screen_time_usage_{device_id}"
         dev = engine.storage.get_device(device_id)
         self._attr_name = f"{dev.get('name', device_id)} Screen Time Today"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "hub")},
+            name="Passable Smart Screen Time Engine",
+            manufacturer="Passable",
+            model="Screen Time & Lockout Hub",
+            sw_version="1.4.0",
+        )
 
     @property
     def native_value(self) -> int:
-        """Return total minutes watched today."""
+        """Return total minutes watched today, or 0 if tracking is disabled."""
         dev = self.engine.storage.get_device(self.device_id)
+        if not dev.get("track_screen_time", True):
+            return 0
         return int(dev.get("screen_time_today_minutes", 0))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra metadata including formatted duration and timer countdown."""
         dev = self.engine.storage.get_device(self.device_id)
-        mins = int(dev.get("screen_time_today_minutes", 0))
-        limit = dev.get("daily_limit_minutes", 120)
-        pct = round((mins / limit) * 100, 1) if limit > 0 else 0
+        track_st = dev.get("track_screen_time", True)
+        daily_limit_en = dev.get("daily_limit_enabled", True)
+        mins = int(dev.get("screen_time_today_minutes", 0)) if track_st else 0
+        limit = dev.get("daily_limit_minutes", 120) if daily_limit_en else None
+        pct = (
+            round((mins / limit) * 100, 1)
+            if (daily_limit_en and limit and limit > 0)
+            else None
+        )
 
         expires_str = dev.get("timer_expires_at")
         timer_active = False
@@ -97,7 +113,9 @@ class PassableScreenTimeUsageSensor(SensorEntity):
                 pass
 
         return {
-            "formatted_screen_time": _format_minutes(mins),
+            "formatted_screen_time": _format_minutes(mins) if track_st else "Disabled",
+            "track_screen_time": track_st,
+            "daily_limit_enabled": daily_limit_en,
             "daily_limit_minutes": limit,
             "percent_of_limit": pct,
             "timer_active": timer_active,
@@ -132,7 +150,7 @@ class PassableScreenTimeUsageSensor(SensorEntity):
 class PassableScreenTimeAppSensor(SensorEntity):
     """Sensor reporting the currently active streaming app or source."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_icon = "mdi:television-play"
 
     def __init__(self, engine: PassableScreenTimeEngine, device_id: str) -> None:
@@ -142,6 +160,13 @@ class PassableScreenTimeAppSensor(SensorEntity):
         self._attr_unique_id = f"passable_screen_time_app_{device_id}"
         dev = engine.storage.get_device(device_id)
         self._attr_name = f"{dev.get('name', device_id)} Active App"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "hub")},
+            name="Passable Smart Screen Time Engine",
+            manufacturer="Passable",
+            model="Screen Time & Lockout Hub",
+            sw_version="1.4.0",
+        )
 
     @property
     def native_value(self) -> str:

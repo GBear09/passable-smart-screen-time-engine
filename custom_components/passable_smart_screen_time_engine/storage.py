@@ -47,7 +47,10 @@ def get_default_device_data(
         "timer_expires_at": None,
         "timer_duration": DEFAULT_TIMER_DURATION,
         "timer_unit": "minutes",
+        "track_screen_time": not is_switch,
+        "daily_limit_enabled": not is_switch,
         "daily_limit_minutes": DEFAULT_DAILY_LIMIT,
+        "screen_time_entity": None,
         "screen_time_today_minutes": 0,
         "screen_time_date": None,
         "active_app": "None",
@@ -124,6 +127,26 @@ class PassableScreenTimeStorage:
                     modified = True
                 else:
                     seen_targets[target] = dev_id
+
+        # 3. Ensure track_screen_time and daily_limit_enabled exist for all devices
+        for dev_id, dev in devices.items():
+            is_sw = (
+                dev.get("device_type") == DEVICE_TYPE_NETWORK_SWITCH
+                or dev.get("target_entity", "").startswith("switch.")
+            )
+            if "track_screen_time" not in dev:
+                dev["track_screen_time"] = not is_sw
+                modified = True
+            if not dev.get("track_screen_time", True):
+                if dev.get("screen_time_today_minutes", 0) != 0:
+                    dev["screen_time_today_minutes"] = 0
+                    modified = True
+            if "daily_limit_enabled" not in dev:
+                dev["daily_limit_enabled"] = not is_sw
+                modified = True
+            if "screen_time_entity" not in dev:
+                dev["screen_time_entity"] = None
+                modified = True
 
         if modified:
             await self.async_save()
@@ -314,24 +337,36 @@ class PassableScreenTimeStorage:
             existing_apps = list(existing_dev.get("apps_used_today", []))
             existing_active_app = existing_dev.get("active_app", "None")
             existing_locked_by_sched = existing_dev.get("locked_by_schedule", False)
+            existing_track_st = existing_dev.get("track_screen_time")
+            existing_dl_en = existing_dev.get("daily_limit_enabled")
+            existing_dl_mins = existing_dev.get("daily_limit_minutes")
+            existing_st_ent = existing_dev.get("screen_time_entity")
 
             device_payload = get_default_device_data(
                 device_id=final_dev_id, target_entity=target_entity, name=friendly_name
             )
-            device_payload.update(
-                {
-                    "locked": is_locked,
-                    "locked_by_schedule": existing_locked_by_sched,
-                    "schedule_enabled": is_sched_en,
-                    "schedule_days": sched_days,
-                    "schedule_start": start_time,
-                    "schedule_end": end_time,
-                    "screen_time_today_minutes": existing_mins,
-                    "screen_time_date": existing_date,
-                    "apps_used_today": existing_apps,
-                    "active_app": existing_active_app,
-                }
-            )
+            updates: dict[str, Any] = {
+                "locked": is_locked,
+                "locked_by_schedule": existing_locked_by_sched,
+                "schedule_enabled": is_sched_en,
+                "schedule_days": sched_days,
+                "schedule_start": start_time,
+                "schedule_end": end_time,
+                "screen_time_today_minutes": existing_mins,
+                "screen_time_date": existing_date,
+                "apps_used_today": existing_apps,
+                "active_app": existing_active_app,
+            }
+            if existing_track_st is not None:
+                updates["track_screen_time"] = existing_track_st
+            if existing_dl_en is not None:
+                updates["daily_limit_enabled"] = existing_dl_en
+            if existing_dl_mins is not None:
+                updates["daily_limit_minutes"] = existing_dl_mins
+            if existing_st_ent is not None:
+                updates["screen_time_entity"] = existing_st_ent
+
+            device_payload.update(updates)
 
             devices[final_dev_id] = device_payload
             imported_count += 1

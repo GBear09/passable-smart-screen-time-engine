@@ -99,7 +99,7 @@ class PassableScreenTimeCard extends LitElement {
     this._localSchedAnchorDate = null;
     this._localTimerDuration = 20;
     this._localTimerUnit = "minutes";
-    this._openSections = { limits: true, timer: true, schedule: false };
+    this._openSections = { limits: false, timer: false, schedule: false };
     this._expandedRecentActivity = false;
     this._selectedTimelineFilter = "all";
     this._isFetchingActivity = false;
@@ -289,6 +289,8 @@ class PassableScreenTimeCard extends LitElement {
         type: "passable_smart_screen_time_engine/save_device",
         device_id: deviceId,
         name: this._localName || undefined,
+        track_screen_time: Boolean(this._localTrackScreenTime),
+        daily_limit_enabled: Boolean(this._localDailyLimitEnabled),
         daily_limit_minutes: parseInt(this._localDailyLimit, 10) || 120,
         schedule_enabled: Boolean(this._localSchedEnabled),
         schedule_days: this._localSchedDays || this._fullDaysList,
@@ -344,8 +346,11 @@ class PassableScreenTimeCard extends LitElement {
 
   _openEdit(deviceId) {
     const dev = this._backendData.devices[deviceId] || {};
+    const isSwitch = dev.device_type === "network_switch";
     this._editingDeviceId = deviceId;
     this._localName = dev.name || "";
+    this._localTrackScreenTime = dev.track_screen_time ?? !isSwitch;
+    this._localDailyLimitEnabled = dev.daily_limit_enabled ?? !isSwitch;
     this._localDailyLimit = dev.daily_limit_minutes || 120;
     this._localSchedEnabled = dev.schedule_enabled ?? true;
     this._localSchedDays = dev.schedule_days ? [...dev.schedule_days] : [...this._fullDaysList];
@@ -356,6 +361,8 @@ class PassableScreenTimeCard extends LitElement {
     this._localTimerDuration = dev.timer_duration || 20;
     this._localTimerUnit = dev.timer_unit || "minutes";
     this._saveError = null;
+    // Start collapsed when opening a device
+    this._openSections = { limits: false, timer: false, schedule: false };
   }
 
   _closeEdit() {
@@ -431,7 +438,6 @@ class PassableScreenTimeCard extends LitElement {
             <h1 class="title">
               <ha-icon icon="mdi:television-shimmer" style="margin-right: 8px; color: var(--primary-color);"></ha-icon>
               ${title}
-              <span class="engine-badge native">SCREEN TIME HUB</span>
             </h1>
             <p class="subtitle">${subtitle}</p>
           </div>
@@ -538,9 +544,20 @@ class PassableScreenTimeCard extends LitElement {
       : targetState && ["on", "playing", "idle"].includes(targetState.state);
     const isLocked = Boolean(dev.locked);
     const timerActive = dev.timer_expires_at && new Date(dev.timer_expires_at).getTime() > Date.now();
+    const trackScreenTime = dev.track_screen_time ?? !isSwitch;
+    const dailyLimitEnabled = dev.daily_limit_enabled ?? !isSwitch;
     const limitMins = dev.daily_limit_minutes || 120;
-    const usageMins = dev.screen_time_today_minutes || 0;
-    const pct = Math.min(100, Math.round((usageMins / limitMins) * 100));
+    const usageMins = trackScreenTime ? (dev.screen_time_today_minutes || 0) : 0;
+    const pct = dailyLimitEnabled ? Math.min(100, Math.round((usageMins / limitMins) * 100)) : 0;
+
+    let sublineText = "";
+    if (!trackScreenTime) {
+      sublineText = `${isPowerOn ? (isSwitch ? "Wi-Fi Unpaused" : "Active") : (isSwitch ? "Wi-Fi Paused" : "Offline")} • Access Control`;
+    } else if (dailyLimitEnabled) {
+      sublineText = `${this._formatMins(usageMins)} / ${this._formatMins(limitMins)} • ${isPowerOn ? "Power On" : "Power Off"}`;
+    } else {
+      sublineText = `${this._formatMins(usageMins)} watched today • ${isPowerOn ? "Power On" : "Power Off"}`;
+    }
 
     return html`
       <div class="door-card ${isLocked ? 'locked' : 'unlocked'}">
@@ -551,9 +568,7 @@ class PassableScreenTimeCard extends LitElement {
 
           <div class="door-title-wrapper" @click=${() => this._openEdit(did)} style="cursor: pointer;">
             <h3 class="door-name">${dev.name}</h3>
-            <span class="door-time">
-              ${this._formatMins(usageMins)} watched today • ${isPowerOn ? "Power On" : "Power Off"}
-            </span>
+            <span class="door-time">${sublineText}</span>
           </div>
 
           <!-- Top-right Pills (Usage & Timer) -->
@@ -566,32 +581,49 @@ class PassableScreenTimeCard extends LitElement {
                   </div>
                 `
               : ""}
-            <div
-              class="battery-pill ${pct >= 100 ? 'critical' : pct >= 75 ? 'warning' : 'good'}"
-              title="Screen Time: ${this._formatMins(usageMins)} / ${this._formatMins(limitMins)} limit"
-            >
-              ${Icons.Clock}
-              <span>${this._formatMins(usageMins)}</span>
-            </div>
+            ${!trackScreenTime
+              ? html`
+                  <div class="battery-pill good" title="Network Access Device">
+                    ${Icons.Shield}
+                    <span>Network</span>
+                  </div>
+                `
+              : html`
+                  <div
+                    class="battery-pill ${dailyLimitEnabled && pct >= 100 ? 'critical' : dailyLimitEnabled && pct >= 75 ? 'warning' : 'good'}"
+                    title="Screen Time: ${this._formatMins(usageMins)}${dailyLimitEnabled ? ` / ${this._formatMins(limitMins)} limit` : ''}"
+                  >
+                    ${Icons.Clock}
+                    <span>${this._formatMins(usageMins)}</span>
+                  </div>
+                `}
           </div>
         </div>
 
         <!-- Telemetry & Active Streaming App Bar -->
-        <div class="device-telemetry-row">
-          <div class="progress-bar-bg" title="Daily limit: ${pct}% reached">
-            <div
-              class="progress-bar-fill ${pct >= 100 ? 'over' : ''}"
-              style="width: ${pct}%;"
-            ></div>
-          </div>
-          ${dev.active_app && dev.active_app !== "None"
-            ? html`
-                <div class="app-chip" title="Current Active Application">
-                  ▶ ${dev.active_app}
-                </div>
-              `
-            : ""}
-        </div>
+        ${(trackScreenTime && dailyLimitEnabled) || (dev.active_app && dev.active_app !== "None")
+          ? html`
+              <div class="device-telemetry-row">
+                ${trackScreenTime && dailyLimitEnabled
+                  ? html`
+                      <div class="progress-bar-bg" title="Daily limit: ${pct}% reached">
+                        <div
+                          class="progress-bar-fill ${pct >= 100 ? 'over' : ''}"
+                          style="width: ${pct}%;"
+                        ></div>
+                      </div>
+                    `
+                  : ""}
+                ${dev.active_app && dev.active_app !== "None"
+                  ? html`
+                      <div class="app-chip" title="Current Active Application">
+                        ▶ ${dev.active_app}
+                      </div>
+                    `
+                  : ""}
+              </div>
+            `
+          : ""}
 
         <!-- Primary Action Row (Smart Lock .door-toggle-btn Parity) -->
         <div class="door-action-row">
@@ -669,17 +701,19 @@ class PassableScreenTimeCard extends LitElement {
               >
                 All Screens
               </button>
-              ${devKeys.map((k) => {
-                const dev = devices[k];
-                return html`
-                  <button
-                    class="filter-pill ${filter === k ? 'active' : ''}"
-                    @click=${() => (this._selectedTimelineFilter = k)}
-                  >
-                    ${dev.name}
-                  </button>
-                `;
-              })}
+              ${devKeys
+                .filter((k) => devices[k].track_screen_time ?? devices[k].device_type !== "network_switch")
+                .map((k) => {
+                  const dev = devices[k];
+                  return html`
+                    <button
+                      class="filter-pill ${filter === k ? 'active' : ''}"
+                      @click=${() => (this._selectedTimelineFilter = k)}
+                    >
+                      ${dev.name}
+                    </button>
+                  `;
+                })}
             </div>
           </div>
         </div>
@@ -687,29 +721,34 @@ class PassableScreenTimeCard extends LitElement {
         <!-- 24-Hour Device Usage Progress Breakdown -->
         <div class="timeline-bar-wrapper">
           <div class="activity-bars-list">
-            ${targetDevKeys.map((k) => {
-              const dev = devices[k];
-              const usage = dev.screen_time_today_minutes || 0;
-              const limit = dev.daily_limit_minutes || 120;
-              const pct = Math.min(100, Math.round((usage / limit) * 100));
-              const isLocked = dev.locked;
-              return html`
-                <div class="timeline-device-row">
-                  <div class="timeline-device-meta">
-                    <span class="timeline-device-name">${dev.name}</span>
-                    <span class="timeline-device-time">
-                      ${this._formatMins(usage)} / ${this._formatMins(limit)} (${pct}%)
-                    </span>
+            ${targetDevKeys
+              .filter((k) => devices[k].track_screen_time ?? devices[k].device_type !== "network_switch")
+              .map((k) => {
+                const dev = devices[k];
+                const dailyLimitEnabled = dev.daily_limit_enabled ?? true;
+                const usage = dev.screen_time_today_minutes || 0;
+                const limit = dev.daily_limit_minutes || 120;
+                const pct = dailyLimitEnabled ? Math.min(100, Math.round((usage / limit) * 100)) : 100;
+                const isLocked = dev.locked;
+                return html`
+                  <div class="timeline-device-row">
+                    <div class="timeline-device-meta">
+                      <span class="timeline-device-name">${dev.name}</span>
+                      <span class="timeline-device-time">
+                        ${dailyLimitEnabled
+                          ? `${this._formatMins(usage)} / ${this._formatMins(limit)} (${pct}%)`
+                          : `${this._formatMins(usage)} (No Limit)`}
+                      </span>
+                    </div>
+                    <div class="timeline-bar">
+                      <div
+                        class="timeline-segment ${isLocked ? 'locked' : (dailyLimitEnabled && pct >= 100) ? 'over' : 'unlocked'}"
+                        style="width: ${dailyLimitEnabled ? pct : Math.min(100, Math.round((usage / 180) * 100))}%;"
+                      ></div>
+                    </div>
                   </div>
-                  <div class="timeline-bar">
-                    <div
-                      class="timeline-segment ${isLocked ? 'locked' : pct >= 100 ? 'over' : 'unlocked'}"
-                      style="width: ${pct}%;"
-                    ></div>
-                  </div>
-                </div>
-              `;
-            })}
+                `;
+              })}
           </div>
 
           <!-- Time Axis Ticks -->
@@ -973,67 +1012,132 @@ class PassableScreenTimeCard extends LitElement {
             "Screen Time & Usage Limits",
             Icons.Sparkles,
             html`
-              <div class="metric-container">
-                <div class="metric-header">
-                  <span class="metric-label">Today's Usage</span>
-                  <span class="metric-value">
-                    ${this._formatMins(usageMins)} / ${this._formatMins(limitMins)}
-                  </span>
-                </div>
-                <div class="progress-bar-bg">
-                  <div
-                    class="progress-bar-fill ${pct >= 100 ? 'over' : ''}"
-                    style="width: ${pct}%"
-                  ></div>
-                </div>
-              </div>
-
-              <div class="inline-grid" style="margin-top: 14px;">
-                <div class="input-group">
-                  <label class="input-label">Daily Limit (Minutes)</label>
-                  <input
-                    type="number"
-                    min="15"
-                    step="15"
-                    class="custom-input"
-                    .value=${this._localDailyLimit}
-                    @input=${(e) => (this._localDailyLimit = parseInt(e.target.value, 10) || 120)}
-                  />
-                </div>
-                <div class="input-group">
-                  <label class="input-label">Quick Limit Presets</label>
-                  <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                    ${[60, 90, 120, 180].map(
-                      (m) => html`
-                        <button
-                          type="button"
-                          class="button-outline"
-                          style="flex: 1; padding: 6px; font-size: 11px; border-radius: 8px; ${this._localDailyLimit === m ? 'background: var(--primary-color); color: #fff; border-color: var(--primary-color);' : ''}"
-                          @click=${() => {
-                            this._localDailyLimit = m;
-                            this.requestUpdate();
-                          }}
-                        >
-                          ${m / 60}h
-                        </button>
-                      `
-                    )}
+              <!-- Track Screen Time Toggle -->
+              <div
+                class="toggle-row no-border no-pad"
+                style="margin-bottom: 12px; cursor: pointer;"
+                @click=${() => {
+                  this._localTrackScreenTime = !this._localTrackScreenTime;
+                  this.requestUpdate();
+                }}
+              >
+                <div>
+                  <div class="toggle-title">Track Screen Time</div>
+                  <div class="toggle-desc" style="font-size: 11px; color: var(--secondary-text-color);">
+                    ${this._localTrackScreenTime
+                      ? "Monitor active viewing minutes and streaming app history"
+                      : "Screen time tracking disabled (access control & downtime only)"}
                   </div>
                 </div>
+                <div class="toggle-switch ${this._localTrackScreenTime ? 'active' : ''}">
+                  <div class="toggle-knob ${this._localTrackScreenTime ? 'active' : ''}"></div>
+                </div>
               </div>
 
-              ${dev.apps_used_today && dev.apps_used_today.length > 0
+              ${this._localTrackScreenTime
                 ? html`
-                    <div style="margin-top: 14px;">
-                      <label class="input-label" style="margin-bottom: 8px; display: block;">Streaming Apps Used Today</label>
-                      <div class="app-chip-list">
-                        ${dev.apps_used_today.map(
-                          (app) => html`<span class="app-badge">▶ ${app}</span>`
-                        )}
+                    <!-- Daily Screen Time Limit Toggle -->
+                    <div
+                      class="toggle-row no-border no-pad"
+                      style="margin-bottom: 14px; padding-top: 10px; border-top: 1px solid var(--divider-color, rgba(255,255,255,0.08)); cursor: pointer;"
+                      @click=${() => {
+                        this._localDailyLimitEnabled = !this._localDailyLimitEnabled;
+                        this.requestUpdate();
+                      }}
+                    >
+                      <div>
+                        <div class="toggle-title">Daily Screen Time Limit</div>
+                        <div class="toggle-desc" style="font-size: 11px; color: var(--secondary-text-color);">
+                          ${this._localDailyLimitEnabled
+                            ? "Automatically restrict device when daily limit is reached"
+                            : "No daily limit enforced for this device"}
+                        </div>
+                      </div>
+                      <div class="toggle-switch ${this._localDailyLimitEnabled ? 'active' : ''}">
+                        <div class="toggle-knob ${this._localDailyLimitEnabled ? 'active' : ''}"></div>
                       </div>
                     </div>
+
+                    ${this._localDailyLimitEnabled
+                      ? html`
+                          <div class="metric-container">
+                            <div class="metric-header">
+                              <span class="metric-label">Today's Usage</span>
+                              <span class="metric-value">
+                                ${this._formatMins(usageMins)} / ${this._formatMins(limitMins)}
+                              </span>
+                            </div>
+                            <div class="progress-bar-bg">
+                              <div
+                                class="progress-bar-fill ${pct >= 100 ? 'over' : ''}"
+                                style="width: ${pct}%"
+                              ></div>
+                            </div>
+                          </div>
+
+                          <div class="inline-grid" style="margin-top: 14px;">
+                            <div class="input-group">
+                              <label class="input-label">Daily Limit (Minutes)</label>
+                              <input
+                                type="number"
+                                min="15"
+                                step="15"
+                                class="custom-input"
+                                .value=${this._localDailyLimit}
+                                @input=${(e) => (this._localDailyLimit = parseInt(e.target.value, 10) || 120)}
+                              />
+                            </div>
+                            <div class="input-group">
+                              <label class="input-label">Quick Limit Presets</label>
+                              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                ${[60, 90, 120, 180].map(
+                                  (m) => html`
+                                    <button
+                                      type="button"
+                                      class="button-outline"
+                                      style="flex: 1; padding: 6px; font-size: 11px; border-radius: 8px; ${this._localDailyLimit === m ? 'background: var(--primary-color); color: #fff; border-color: var(--primary-color);' : ''}"
+                                      @click=${() => {
+                                        this._localDailyLimit = m;
+                                        this.requestUpdate();
+                                      }}
+                                    >
+                                      ${m / 60}h
+                                    </button>
+                                  `
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        `
+                      : html`
+                          <div class="metric-container" style="background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.05);">
+                            <div class="metric-header">
+                              <span class="metric-label">Today's Usage</span>
+                              <span class="metric-value" style="color: var(--primary-color);">
+                                ${this._formatMins(usageMins)} (Unlimited)
+                              </span>
+                            </div>
+                          </div>
+                        `}
+
+                    ${dev.apps_used_today && dev.apps_used_today.length > 0
+                      ? html`
+                          <div style="margin-top: 14px;">
+                            <label class="input-label" style="margin-bottom: 8px; display: block;">Streaming Apps Used Today</label>
+                            <div class="app-chip-list">
+                              ${dev.apps_used_today.map(
+                                (app) => html`<span class="app-badge">▶ ${app}</span>`
+                              )}
+                            </div>
+                          </div>
+                        `
+                      : html`<div class="empty-feed" style="margin-top: 10px;">No streaming apps launched today.</div>`}
                   `
-                : html`<div class="empty-feed" style="margin-top: 10px;">No streaming apps launched today.</div>`}
+                : html`
+                    <div class="empty-feed" style="margin-top: 10px; font-size: 12px; line-height: 1.5; text-align: left; padding: 12px 14px; background: rgba(255, 255, 255, 0.03); border-radius: 8px; border: 1px dashed var(--divider-color, rgba(255,255,255,0.1));">
+                      Screen time tracking is disabled for this device. It functions as a scheduled downtime and manual lockout target (recommended for Wi-Fi paused tablets and network switches).
+                    </div>
+                  `}
             `
           )}
 
@@ -1286,7 +1390,7 @@ class PassableScreenTimeCard extends LitElement {
         </div>
         <div
           class="section-content-wrapper"
-          style="max-height: ${isOpen ? '600px' : '0px'}; opacity: ${isOpen ? '1' : '0'}"
+          style="max-height: ${isOpen ? '800px' : '0px'}; opacity: ${isOpen ? '1' : '0'}"
         >
           <div class="section-content">${content}</div>
         </div>

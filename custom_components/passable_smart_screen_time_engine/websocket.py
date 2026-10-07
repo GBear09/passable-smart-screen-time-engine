@@ -73,6 +73,9 @@ async def ws_get_data(
         vol.Optional("schedule_recurrence"): str,
         vol.Optional("schedule_anchor_date"): vol.Any(str, None),
         vol.Optional("daily_limit_minutes"): vol.Coerce(int),
+        vol.Optional("daily_limit_enabled"): bool,
+        vol.Optional("track_screen_time"): bool,
+        vol.Optional("screen_time_entity"): vol.Any(str, None),
     }
 )
 @websocket_api.async_response
@@ -100,9 +103,16 @@ async def ws_save_device(
         "schedule_recurrence",
         "schedule_anchor_date",
         "daily_limit_minutes",
+        "daily_limit_enabled",
+        "track_screen_time",
+        "screen_time_entity",
     ]:
         if key in msg:
             updates[key] = msg[key]
+
+    if updates.get("track_screen_time") is False:
+        updates["screen_time_today_minutes"] = 0
+        updates["apps_used_today"] = []
 
     await engine.storage.async_update_device(device_id, updates)
     await engine.async_evaluate_schedules()

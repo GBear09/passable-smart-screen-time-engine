@@ -2,6 +2,20 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.0] - 2026-10-06
+
+### ✨ Added
+- **Device Controls & Sensors on Integration Hub Page**: All individual device controls (`switch.<device>_lockout`, `switch.<device>_schedule`) and diagnostic sensors (`sensor.<device>_screen_time_today`, `sensor.<device>_active_app`) are now bound directly to the main `Passable Smart Screen Time Engine` device page in Home Assistant (`DeviceInfo(identifiers={(DOMAIN, "hub")})`). Users can view and control all devices directly from the Home Assistant integration device settings.
+- **Configurable Daily Limit Toggle**: Added a per-device `daily_limit_enabled` setting. Users can now disable daily screen time limits individually for devices without enforcing an arbitrary limit, while still retaining scheduled downtime and manual lockout capabilities.
+- **Track Screen Time Toggle for Router / Network Switches**: Added a `track_screen_time` toggle per device. For devices controlled via Wi-Fi pausing (e.g. Eero router pause switches), the engine defaults `track_screen_time` to `false`, preventing false active screen time accumulation when the router switch is unpaused while the device is sleeping.
+- **Support for Dedicated Screen Time Entities**: Added support for an optional `screen_time_entity` (such as a Home Assistant Companion App sensor) to monitor physical screen time independently of the network power/pause switch.
+
+### 🎨 UI & Card Improvements
+- **Default Collapsed Menus in Edit Drawer**: When opening a device's settings drawer in `passable-screen-time-card`, all accordion sections (Screen Time Limits, Viewing Timer, Downtime Schedule) now start collapsed by default to conserve screen real estate.
+- **Removed Redundant Header Badge**: Removed the `"SCREEN TIME HUB"` badge from the card header for a cleaner, modern look.
+- **Dynamic 24-Hour Timeline & Activity Filtering**: Devices with screen time tracking disabled (`track_screen_time: false`) are cleanly excluded from the 24-hour timeline and activity logs, preventing clutter.
+- **Unlimited Usage Display**: When daily limits are disabled, the device tile and drawer display the current usage cleanly as `(Unlimited)` rather than calculating against a fictitious limit.
+
 ## [1.3.0] - 2026-10-06
 
 ### ✨ Added

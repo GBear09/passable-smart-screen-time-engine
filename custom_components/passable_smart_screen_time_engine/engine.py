@@ -227,14 +227,27 @@ class PassableScreenTimeEngine:
             return
 
         dev = self.storage.get_device(device_id)
-        target = dev.get("target_entity")
+        if not dev.get("track_screen_time", True):
+            # Screen time tracking is disabled for this device (e.g. router network switch)
+            if dev.get("screen_time_today_minutes", 0) != 0:
+                await self.storage.async_update_device(
+                    device_id, {"screen_time_today_minutes": 0, "apps_used_today": []}
+                )
+                async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
+            return
+
+        target = dev.get("screen_time_entity") or dev.get("target_entity")
         if not target:
             return
 
         now = dt_util.now()
         start_of_day = dt_util.start_of_local_day(now)
         dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
-        is_switch = dev_type == DEVICE_TYPE_NETWORK_SWITCH
+        is_switch = (
+            target.startswith("switch.") or target.startswith("binary_sensor.")
+            if dev.get("screen_time_entity")
+            else dev_type == DEVICE_TYPE_NETWORK_SWITCH
+        )
 
         def _fetch_states():
             return state_changes_during_period(
@@ -748,11 +761,12 @@ class PassableScreenTimeEngine:
                 )
 
         # 3. Schedule recorder reconciliation after state change
-        async def _delayed_reconcile() -> None:
-            await asyncio.sleep(2.0)
-            await self.async_reconcile_device_screen_time(device_id)
+        if dev_data.get("track_screen_time", True):
+            async def _delayed_reconcile() -> None:
+                await asyncio.sleep(2.0)
+                await self.async_reconcile_device_screen_time(device_id)
 
-        self.hass.async_create_task(_delayed_reconcile())
+            self.hass.async_create_task(_delayed_reconcile())
 
     @callback
     def _async_minute_check(self, now: datetime) -> None:
@@ -761,7 +775,10 @@ class PassableScreenTimeEngine:
         has_updates = False
 
         for dev_id, dev in devices.items():
-            target = dev.get("target_entity")
+            if not dev.get("track_screen_time", True):
+                continue
+
+            target = dev.get("screen_time_entity") or dev.get("target_entity")
             if not target:
                 continue
 
@@ -770,22 +787,41 @@ class PassableScreenTimeEngine:
                 continue
 
             dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
+            is_switch = (
+                target.startswith("switch.") or target.startswith("binary_sensor.")
+                if dev.get("screen_time_entity")
+                else dev_type == DEVICE_TYPE_NETWORK_SWITCH
+            )
             is_active = (
-                state_obj.state not in [
-                    "off",
-                    "standby",
-                    "unavailable",
-                    "unknown",
-                ]
-                if dev_type == DEVICE_TYPE_MEDIA_PLAYER
-                else state_obj.state == "off"
+                state_obj.state in ["on", "active"]
+                if is_switch and dev.get("screen_time_entity")
+                else (
+                    state_obj.state == "off"
+                    if is_switch
+                    else state_obj.state
+                    not in ["off", "standby", "unavailable", "unknown"]
+                )
             )
 
             if is_active:
                 current_mins = dev.get("screen_time_today_minutes", 0)
-                dev["screen_time_today_minutes"] = current_mins + 1
+                new_mins = current_mins + 1
+                dev["screen_time_today_minutes"] = new_mins
                 dev["screen_time_date"] = dt_util.now().strftime("%Y-%m-%d")
                 has_updates = True
+
+                # Check daily limit auto-lockout
+                if dev.get("daily_limit_enabled", False):
+                    limit_mins = dev.get("daily_limit_minutes", 120)
+                    if new_mins >= limit_mins and not dev.get("locked", False):
+                        _LOGGER.info(
+                            "Daily screen time limit reached for %s (%s mins). Locking device.",
+                            dev_id,
+                            limit_mins,
+                        )
+                        self.hass.async_create_task(
+                            self.async_set_device_lockout(dev_id, locked=True)
+                        )
 
         if has_updates:
             self.hass.async_create_task(self.storage.async_save())

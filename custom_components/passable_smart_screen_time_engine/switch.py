@@ -38,7 +38,7 @@ async def async_setup_entry(
 class PassableLockoutSwitch(SwitchEntity):
     """Switch representing whether a device is currently locked out."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
 
     def __init__(self, engine: PassableScreenTimeEngine, device_id: str) -> None:
         """Initialize lockout switch."""
@@ -47,6 +47,13 @@ class PassableLockoutSwitch(SwitchEntity):
         self._attr_unique_id = f"passable_screen_time_lockout_{device_id}"
         dev = engine.storage.get_device(device_id)
         self._attr_name = f"{dev.get('name', device_id)} Lockout"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "hub")},
+            name="Passable Smart Screen Time Engine",
+            manufacturer="Passable",
+            model="Screen Time & Lockout Hub",
+            sw_version="1.4.0",
+        )
 
     @property
     def is_on(self) -> bool:
@@ -90,7 +97,7 @@ class PassableLockoutSwitch(SwitchEntity):
 class PassableScheduleSwitch(SwitchEntity):
     """Switch controlling whether the automated schedule engine is enabled for a device."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
 
     def __init__(self, engine: PassableScreenTimeEngine, device_id: str) -> None:
         """Initialize schedule enable switch."""
@@ -100,6 +107,13 @@ class PassableScheduleSwitch(SwitchEntity):
         dev = engine.storage.get_device(device_id)
         self._attr_name = f"{dev.get('name', device_id)} Schedule Engine"
         self._attr_icon = "mdi:calendar-clock"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "hub")},
+            name="Passable Smart Screen Time Engine",
+            manufacturer="Passable",
+            model="Screen Time & Lockout Hub",
+            sw_version="1.4.0",
+        )
 
     @property
     def is_on(self) -> bool:
@@ -161,7 +175,7 @@ class PassableMasterLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.1.0",
+            sw_version="1.4.0",
         )
 
     @property

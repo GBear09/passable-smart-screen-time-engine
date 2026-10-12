@@ -2,6 +2,16 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.3] - 2026-10-12
+
+### 🛡️ Anti-Bypass & Reliability Fortifications
+- **Anti-Bypass Protection (Rapid Power-Cycling Workaround)**: Implemented a persistent retry and verification loop when enforcing device lockouts on media players and network switches. Rapidly turning a TV or device on and off no longer bypasses lockouts:
+  - If a locked device transitions to an active state, the engine launches an active verification loop that checks the device state and re-asserts `turn_off` (or pause) every 4 seconds for up to 10 attempts until confirmed inactive.
+  - Added a 2-second post-inactivation verification check to ensure the device remains powered off and does not immediately bounce back on.
+  - Eliminated single-shot dropped events caused by static enforcing sets; state transitions are now smoothly debounced while instantly firing on re-activation.
+- **Lockout Watchdog in Minute Check**: Added an active state watchdog during each 60-second periodic cycle. If a locked device is detected active, the engine immediately launches enforcement.
+- **Instant Clean Cancellation on Unlock & Timers**: When a parent explicitly unlocks a device or starts a "One More Show" countdown timer, all background enforcement verification tasks are immediately cancelled, ensuring seamless and unhindered viewing.
+
 ## [1.4.2] - 2026-10-07
 
 ### 🐛 Fixed & Improved

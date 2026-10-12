@@ -181,8 +181,28 @@ class PassableScreenTimeEngine:
         self._timer_unsubs: dict[str, CALLBACK_TYPE] = {}
         self._unsub_callbacks: list[CALLBACK_TYPE] = []
         self._device_state_listeners: list[CALLBACK_TYPE] = []
-        self._enforcing_devices: set[str] = set()
+        self._enforce_tasks: dict[str, asyncio.Task] = {}
+        self._last_enforce_time: dict[str, float] = {}
         self._active_restrictions: set[str] = set()
+
+    def _is_device_active(
+        self, state_str: str | None, dev_type: str = DEVICE_TYPE_MEDIA_PLAYER
+    ) -> bool:
+        """Check if a state string represents an active device."""
+        if not state_str:
+            return False
+        if dev_type == DEVICE_TYPE_NETWORK_SWITCH:
+            return state_str == "off"  # switch off = unpaused
+        return state_str not in ["off", "standby", "unavailable", "unknown"]
+
+    def _is_target_active(
+        self, target: str, dev_type: str = DEVICE_TYPE_MEDIA_PLAYER
+    ) -> bool:
+        """Check if target entity is currently active in Home Assistant."""
+        state_obj = self.hass.states.get(target)
+        if not state_obj:
+            return False
+        return self._is_device_active(state_obj.state, dev_type)
 
     async def async_setup(self) -> None:
         """Initialize engine, restore timers, attach listeners and schedule evaluations."""
@@ -528,6 +548,12 @@ class PassableScreenTimeEngine:
             updates["manual_unlock_override"] = False
         else:
             updates["locked_by_schedule"] = False
+            # Cancel any running enforcement task immediately
+            if device_id in self._enforce_tasks:
+                task = self._enforce_tasks.pop(device_id)
+                if not task.done():
+                    task.cancel()
+
             # If unlocking manually while an active schedule window is running, set manual override
             if not by_schedule and self.is_device_in_schedule_window(dev):
                 updates["manual_unlock_override"] = True
@@ -583,32 +609,129 @@ class PassableScreenTimeEngine:
             )
 
     async def _async_enforce_device_locked(self, device_id: str) -> None:
-        """Send turn-off or network pause command to hardware."""
+        """Launch anti-bypass verification loop to enforce lockout on hardware."""
+        # Cancel any existing enforcement task for this device
+        if device_id in self._enforce_tasks:
+            prev_task = self._enforce_tasks.pop(device_id)
+            if not prev_task.done():
+                prev_task.cancel()
+
+        dev = self.storage.get_device(device_id)
+        target = dev.get("target_entity")
+        if not target or not self.hass.states.get(target):
+            return
+
+        task = self.hass.async_create_task(
+            self._async_enforce_device_locked_loop(device_id)
+        )
+        self._enforce_tasks[device_id] = task
+
+    async def _async_enforce_device_locked_loop(self, device_id: str) -> None:
+        """Enforce lockout with persistent retry loop against rapid power cycling."""
         dev = self.storage.get_device(device_id)
         target = dev.get("target_entity")
         dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
 
-        if not target or not self.hass.states.get(target):
+        if not target:
             return
 
-        self._enforcing_devices.add(device_id)
+        service_domain = "switch" if dev_type == DEVICE_TYPE_NETWORK_SWITCH else "media_player"
+        service_action = "turn_on" if dev_type == DEVICE_TYPE_NETWORK_SWITCH else "turn_off"
+
+        # If already inactive/off, no initial action needed
+        if not self._is_target_active(target, dev_type):
+            return
+
+        max_attempts = 10
+        delay_seconds = 4.0
+
         try:
-            if dev_type == DEVICE_TYPE_NETWORK_SWITCH:
-                # Network switch: ON = paused
-                await self.hass.services.async_call(
-                    "switch", "turn_on", {"entity_id": target}
-                )
-            else:
-                # Media player: turn OFF
-                await self.hass.services.async_call(
-                    "media_player", "turn_off", {"entity_id": target}
-                )
+            for attempt in range(1, max_attempts + 1):
+                # Verify device is still locked in storage
+                current_dev = self.storage.get_device(device_id)
+                if not current_dev or not current_dev.get("locked", False):
+                    _LOGGER.debug(
+                        "Enforcement loop ended for %s: device is no longer locked.",
+                        device_id,
+                    )
+                    break
+
+                # If target is active, send turn_off / pause command
+                if self._is_target_active(target, dev_type):
+                    _LOGGER.info(
+                        "Lockout enforcement attempt %s/%s for %s (%s: %s.%s)",
+                        attempt,
+                        max_attempts,
+                        device_id,
+                        target,
+                        service_domain,
+                        service_action,
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                        self._last_enforce_time[device_id] = loop.time()
+                    except RuntimeError:
+                        pass
+
+                    try:
+                        await self.hass.services.async_call(
+                            service_domain,
+                            service_action,
+                            {"entity_id": target},
+                            blocking=True,
+                        )
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Failed to call %s.%s on %s during enforcement: %s",
+                            service_domain,
+                            service_action,
+                            target,
+                            err,
+                        )
+
+                # Wait before verifying
+                await asyncio.sleep(delay_seconds)
+
+                # Check if device was unlocked during delay
+                current_dev = self.storage.get_device(device_id)
+                if not current_dev or not current_dev.get("locked", False):
+                    break
+
+                # If device is now inactive, perform a 2s confirmation check
+                if not self._is_target_active(target, dev_type):
+                    await asyncio.sleep(2.0)
+                    current_dev = self.storage.get_device(device_id)
+                    if not current_dev or not current_dev.get("locked", False):
+                        break
+                    if not self._is_target_active(target, dev_type):
+                        _LOGGER.debug(
+                            "Device %s confirmed inactive (%s). Enforcement successful.",
+                            device_id,
+                            target,
+                        )
+                        break
+                    # If it became active again during the 2s window, continue retry loop
+        except asyncio.CancelledError:
+            _LOGGER.debug("Enforcement loop for %s cancelled.", device_id)
+            raise
+        except Exception as err:
+            _LOGGER.error("Unexpected error in enforcement loop for %s: %s", device_id, err)
         finally:
-            await asyncio.sleep(0.5)
-            self._enforcing_devices.discard(device_id)
+            current_task = None
+            try:
+                current_task = asyncio.current_task()
+            except RuntimeError:
+                pass
+            if current_task and self._enforce_tasks.get(device_id) is current_task:
+                self._enforce_tasks.pop(device_id, None)
 
     async def _async_enforce_device_unlocked(self, device_id: str) -> None:
         """Restore device access and optionally turn ON."""
+        if device_id in self._enforce_tasks:
+            task = self._enforce_tasks.pop(device_id)
+            if not task.done():
+                task.cancel()
+
         dev = self.storage.get_device(device_id)
         target = dev.get("target_entity")
         dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
@@ -761,29 +884,33 @@ class PassableScreenTimeEngine:
         if not device_id or not dev_data:
             return
 
-        # 1. Enforce lockout if turned active while locked
+        # 1. Enforce lockout if turned active while locked (Anti-Bypass Protection)
         is_locked = dev_data.get("locked", False)
         dev_type = dev_data.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
+        is_active = self._is_device_active(new_state.state, dev_type)
 
-        is_active = False
-        if dev_type == DEVICE_TYPE_NETWORK_SWITCH:
-            is_active = new_state.state == "off"  # switch off = unpaused
-        else:
-            is_active = new_state.state not in [
-                "off",
-                "standby",
-                "unavailable",
-                "unknown",
-            ]
-
-        if is_locked and is_active and device_id not in self._enforcing_devices:
-            _LOGGER.warning(
-                "Unauthorized active state detected on locked device %s. Enforcing lockout.",
-                device_id,
-            )
-            self.hass.async_create_task(
-                self._async_enforce_device_locked(device_id)
-            )
+        if is_locked and is_active:
+            now_ts = 0.0
+            try:
+                now_ts = asyncio.get_running_loop().time()
+            except RuntimeError:
+                pass
+            last_ts = self._last_enforce_time.get(device_id, 0.0)
+            task = self._enforce_tasks.get(device_id)
+            if task and not task.done() and (now_ts - last_ts) < 1.5:
+                _LOGGER.debug(
+                    "Enforcement task already active and recently triggered for %s",
+                    device_id,
+                )
+            else:
+                _LOGGER.warning(
+                    "Unauthorized active state (%s) detected on locked device %s. Enforcing lockout.",
+                    new_state.state,
+                    device_id,
+                )
+                self.hass.async_create_task(
+                    self._async_enforce_device_locked(device_id)
+                )
 
         # 2. Track Active Streaming App
         if is_active and dev_type == DEVICE_TYPE_MEDIA_PLAYER:
@@ -841,6 +968,24 @@ class PassableScreenTimeEngine:
         has_updates = False
 
         for dev_id, dev in devices.items():
+            target_ent = dev.get("target_entity")
+            dev_type = dev.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
+
+            # Watchdog check: If device is marked locked but hardware is actively on, re-enforce lockout
+            if (
+                dev.get("locked", False)
+                and target_ent
+                and self._is_target_active(target_ent, dev_type)
+            ):
+                _LOGGER.warning(
+                    "Watchdog: Device %s is locked but detected active (%s). Re-enforcing lockout.",
+                    dev_id,
+                    target_ent,
+                )
+                self.hass.async_create_task(
+                    self._async_enforce_device_locked(dev_id)
+                )
+
             if not dev.get("track_screen_time", True):
                 continue
 
@@ -916,6 +1061,13 @@ class PassableScreenTimeEngine:
         # 1. Cancel timer if active
         self.async_cancel_device_timer(device_id)
 
+        # Cancel any active enforcement task
+        if device_id in self._enforce_tasks:
+            task = self._enforce_tasks.pop(device_id)
+            if not task.done():
+                task.cancel()
+        self._last_enforce_time.pop(device_id, None)
+
         # 2. Remove from storage
         await self.storage.async_remove_device(device_id)
 
@@ -949,7 +1101,7 @@ class PassableScreenTimeEngine:
         async_dispatcher_send(self.hass, SIGNAL_DEVICE_UPDATED, device_id)
 
     async def async_unload(self) -> None:
-        """Cancel all registered listeners and timers on unload."""
+        """Cancel all registered listeners, enforcement tasks, and timers on unload."""
         for unsub in self._unsub_callbacks:
             unsub()
         self._unsub_callbacks.clear()
@@ -961,3 +1113,9 @@ class PassableScreenTimeEngine:
         for unsub in self._timer_unsubs.values():
             unsub()
         self._timer_unsubs.clear()
+
+        for task in self._enforce_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._enforce_tasks.clear()
+        self._last_enforce_time.clear()

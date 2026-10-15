@@ -643,7 +643,7 @@ class PassableScreenTimeEngine:
             return
 
         max_attempts = 10
-        delay_seconds = 4.0
+        delay_seconds = 8.0
 
         try:
             for attempt in range(1, max_attempts + 1):
@@ -868,6 +868,7 @@ class PassableScreenTimeEngine:
     def _async_handle_device_state_change(self, event: Any) -> None:
         """Intercept device state changes for bypass prevention and app tracking."""
         target_entity = event.data.get("entity_id")
+        old_state = event.data.get("old_state")
         new_state = event.data.get("new_state")
         if not new_state:
             return
@@ -888,6 +889,11 @@ class PassableScreenTimeEngine:
         is_locked = dev_data.get("locked", False)
         dev_type = dev_data.get("device_type", DEVICE_TYPE_MEDIA_PLAYER)
         is_active = self._is_device_active(new_state.state, dev_type)
+        was_active = (
+            self._is_device_active(old_state.state, dev_type)
+            if old_state
+            else False
+        )
 
         if is_locked and is_active:
             now_ts = 0.0
@@ -897,9 +903,22 @@ class PassableScreenTimeEngine:
                 pass
             last_ts = self._last_enforce_time.get(device_id, 0.0)
             task = self._enforce_tasks.get(device_id)
-            if task and not task.done() and (now_ts - last_ts) < 1.5:
+
+            if task and not task.done():
                 _LOGGER.debug(
-                    "Enforcement task already active and recently triggered for %s",
+                    "Enforcement task already active for locked device %s (state: %s)",
+                    device_id,
+                    new_state.state,
+                )
+            elif (now_ts - last_ts) < 6.0:
+                _LOGGER.debug(
+                    "Enforcement cooldown active for %s (%.1fs since last action)",
+                    device_id,
+                    now_ts - last_ts,
+                )
+            elif was_active and old_state and old_state.state == new_state.state:
+                _LOGGER.debug(
+                    "Ignoring attribute change on already active locked device %s",
                     device_id,
                 )
             else:
@@ -977,14 +996,16 @@ class PassableScreenTimeEngine:
                 and target_ent
                 and self._is_target_active(target_ent, dev_type)
             ):
-                _LOGGER.warning(
-                    "Watchdog: Device %s is locked but detected active (%s). Re-enforcing lockout.",
-                    dev_id,
-                    target_ent,
-                )
-                self.hass.async_create_task(
-                    self._async_enforce_device_locked(dev_id)
-                )
+                task = self._enforce_tasks.get(dev_id)
+                if not task or task.done():
+                    _LOGGER.warning(
+                        "Watchdog: Device %s is locked but detected active (%s). Re-enforcing lockout.",
+                        dev_id,
+                        target_ent,
+                    )
+                    self.hass.async_create_task(
+                        self._async_enforce_device_locked(dev_id)
+                    )
 
             if not dev.get("track_screen_time", True):
                 continue

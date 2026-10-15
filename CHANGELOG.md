@@ -2,6 +2,15 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.4] - 2026-10-15
+
+### 🛡️ Lockout Enforcement & State Stability
+- **Eliminated Rapid Power-Cycle Bounce on Smart TVs**:
+  - Increased active lockout retry verification interval from 4.0s to 8.0s (`delay_seconds = 8.0`). Devices that take several seconds to transition and report standby over network protocols (such as Sony Bravia TVs using `androidtv_remote`) no longer receive premature toggle commands while shutting down.
+  - Implemented a 6.0-second command cooldown (`_last_enforce_time`) per device to prevent rapid re-triggering of power commands.
+  - Hardened `_async_handle_device_state_change` to guard against attribute-only updates (volume, audio formats, source) when the device state is already active, preventing cancellation and bouncing of in-flight enforcement tasks.
+  - Guarded the 60-second periodic watchdog against spawning redundant enforcement tasks when a lockout verification loop is already actively running.
+
 ## [1.4.3] - 2026-10-12
 
 ### 🛡️ Anti-Bypass & Reliability Fortifications

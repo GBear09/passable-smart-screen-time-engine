@@ -89,9 +89,15 @@ class PassableScreenTimeStorage:
         # 1. Clean up speaker devices or MA virtual players imported by accident
         for dev_id, dev in list(devices.items()):
             target = dev.get("target_entity", "")
+            # Only media_player entities can be speakers or MA virtual players; never delete network switches or non-media players
+            if not target or not target.startswith("media_player."):
+                continue
+
             st_state = self.hass.states.get(target) if target else None
             is_speaker = (
-                any(k in target for k in ("speaker", "_speaker_ma", "_ma", "google_cast"))
+                any(k in target for k in ("speaker", "echo", "dot", "google_cast"))
+                or target.endswith("_ma")
+                or "_ma_" in target
                 or (st_state and (
                     st_state.attributes.get("device_class") == "speaker"
                     or st_state.attributes.get("mass_player_type") is not None
@@ -246,7 +252,11 @@ class PassableScreenTimeStorage:
                 ]
                 filtered_mps = []
                 for mp in mp_candidates:
-                    if any(k in mp for k in ("speaker", "echo", "dot", "_ma", "google_cast")):
+                    if (
+                        any(k in mp for k in ("speaker", "echo", "dot", "google_cast"))
+                        or mp.endswith("_ma")
+                        or "_ma_" in mp
+                    ):
                         continue
                     st = self.hass.states.get(mp)
                     if st and (

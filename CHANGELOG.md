@@ -2,6 +2,14 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [1.4.5] - 2026-11-02
+
+### 🐛 Fixed
+- **Prevent Unintended Device Purging and Schedule Resets on Restart**:
+  - Restricted the startup speaker and Music Assistant player cleanup routine exclusively to `media_player.` entities. Network switches and pause switches (`switch.*`) are now strictly excluded from speaker validation.
+  - Replaced loose substring checks (`"_ma"`) with targeted boundary matching (`target.endswith("_ma")`, `"_ma_" in target`). Previously, any switch or media player containing `_ma` anywhere in its slug (such as `_madeleine`, `_master_bedroom`, or `_main`) was falsely classified as a Music Assistant speaker, deleted from storage on startup, and re-created with default schedule parameters (`08:00 -> 20:00`, all 7 days).
+  - Applied the same bounded checks to legacy helper import filtering in `async_import_legacy_helpers()`.
+
 ## [1.4.4] - 2026-10-15
 
 ### 🛡️ Lockout Enforcement & State Stability

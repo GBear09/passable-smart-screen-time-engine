@@ -34,7 +34,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     card_path = (
         Path(__file__).parent / "frontend" / "passable-screen-time-card.js"
     )
-    if not card_path.is_file():
+    if not await hass.async_add_executor_job(card_path.is_file):
         _LOGGER.warning(
             "Passable Screen Time Card file not found at %s", card_path
         )
@@ -131,13 +131,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await storage.async_update_device(dev_id, payload)
 
     # Populate any global restrictions
-    restrictions_list = (
-        entry.options.get(CONF_GLOBAL_RESTRICTIONS)
-        if CONF_GLOBAL_RESTRICTIONS in entry.options
-        else entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
-    )
-    restrictions = [{"entity": e} for e in restrictions_list]
-    if restrictions:
+    if CONF_GLOBAL_RESTRICTIONS in entry.options or CONF_GLOBAL_RESTRICTIONS in entry.data:
+        restrictions_list = (
+            entry.options.get(CONF_GLOBAL_RESTRICTIONS)
+            if CONF_GLOBAL_RESTRICTIONS in entry.options
+            else entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
+        )
+        restrictions = [{"entity": e} for e in restrictions_list]
         await storage.async_update_global_restrictions(restrictions)
 
     # Automatically import legacy helpers ONLY once on initial setup if selected
@@ -309,5 +309,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    await hass.config_entries.async_reload(entry.entry_id)

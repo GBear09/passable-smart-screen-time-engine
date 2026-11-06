@@ -131,8 +131,16 @@ class PassableScreenTimeCard extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    if (this._timerInterval) clearInterval(this._timerInterval);
+    if (this._pollInterval) clearInterval(this._pollInterval);
     this._fetchData();
-    this._timerInterval = setInterval(() => this.requestUpdate(), 1000);
+    this._timerInterval = setInterval(() => {
+      const devices = this._backendData?.devices || {};
+      const hasActiveTimer = Object.values(devices).some(
+        (d) => d.timer_expires_at && new Date(d.timer_expires_at).getTime() > Date.now()
+      );
+      if (hasActiveTimer) this.requestUpdate();
+    }, 1000);
     this._pollInterval = setInterval(() => this._fetchData(), 15000);
   }
 
@@ -140,6 +148,8 @@ class PassableScreenTimeCard extends LitElement {
     super.disconnectedCallback();
     if (this._timerInterval) clearInterval(this._timerInterval);
     if (this._pollInterval) clearInterval(this._pollInterval);
+    this._timerInterval = null;
+    this._pollInterval = null;
   }
 
   async _fetchData() {
@@ -2766,7 +2776,10 @@ if (!customElements.get("passable-screen-time-card")) {
   customElements.define("passable-screen-time-card", PassableScreenTimeCard);
 }
 if (!customElements.get("passable-device-lockout-card")) {
-  customElements.define("passable-device-lockout-card", PassableScreenTimeCard);
+  customElements.define(
+    "passable-device-lockout-card",
+    class extends PassableScreenTimeCard {}
+  );
 }
 if (!customElements.get("passable-screen-time-card-editor")) {
   customElements.define("passable-screen-time-card-editor", PassableScreenTimeCardEditor);

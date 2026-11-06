@@ -438,7 +438,8 @@ class PassableScreenTimeEngine:
         self, device_id: str, duration: float | int, unit: str = "minutes"
     ) -> None:
         """Start a countdown access timer and unlock the device."""
-        self.async_cancel_device_timer(device_id)
+        if device_id in self._timer_unsubs:
+            self._timer_unsubs.pop(device_id)()
 
         dur = float(duration)
         delta = (
@@ -763,25 +764,41 @@ class PassableScreenTimeEngine:
         devices = self.storage.get_all_devices()
 
         for dev_id, dev in devices.items():
+            # Don't override an active timer
+            if dev.get("timer_expires_at"):
+                continue
+
+            if self._active_restrictions:
+                if not dev.get("locked", False):
+                    _LOGGER.info(
+                        "Global restriction active (%s). Locking %s.",
+                        ", ".join(sorted(self._active_restrictions)),
+                        dev_id,
+                    )
+                    await self.async_set_device_lockout(
+                        dev_id, locked=True, by_schedule=True
+                    )
+                elif not dev.get("locked_by_schedule", False):
+                    await self.storage.async_update_device(
+                        dev_id, {"locked_by_schedule": True}
+                    )
+                continue
+
             if not dev.get("schedule_enabled", False):
                 # Schedule is disabled; clear manual override if set
                 if dev.get("manual_unlock_override", False):
                     await self.storage.async_update_device(
                         dev_id, {"manual_unlock_override": False}
                     )
-                # If device was locked by schedule, and schedule is now disabled, auto-unlock it
+                # If device was locked by schedule/global restriction, and schedule is disabled, auto-unlock it
                 if dev.get("locked", False) and dev.get("locked_by_schedule", False):
                     _LOGGER.info(
-                        "Schedule disabled for %s while locked by schedule. Auto-unlocking.",
+                        "Schedule/restriction inactive for %s while locked by schedule. Auto-unlocking.",
                         dev_id,
                     )
                     await self.async_set_device_lockout(
                         dev_id, locked=False, power_on=False, by_schedule=False
                     )
-                continue
-
-            # Don't override an active timer
-            if dev.get("timer_expires_at"):
                 continue
 
             recurrence = dev.get("schedule_recurrence", "weekly")

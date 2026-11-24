@@ -1,17 +1,27 @@
 start_timer:
-  name: Start Viewing Timer
-  description: Starts a temporary countdown viewing timer ("one more show") and unlocks the target device.
+  name: Start Screen Time Timer
+  description: Starts an unlock ("One More Show"), temporary lockout, or wind-down countdown timer for a device or all devices.
   fields:
     device_id:
       name: Device ID
-      description: The ID of the managed device (e.g., living_room_tv_2).
+      description: The ID of the managed device (e.g., living_room_tv_2), or 'all' for all devices.
       required: true
       selector:
         text: {}
+    mode:
+      name: Timer Mode
+      description: Whether to unlock temporarily (unlock), lock temporarily (lock), or lock after countdown (wind_down).
+      default: unlock
+      selector:
+        select:
+          options:
+            - unlock
+            - lock
+            - wind_down
     duration:
       name: Duration
-      description: Number of minutes or hours.
-      required: true
+      description: Number of minutes or hours (ignored if until_time is provided).
+      required: false
       default: 20
       selector:
         number:
@@ -27,14 +37,26 @@ start_timer:
           options:
             - minutes
             - hours
+    until_time:
+      name: Until Time
+      description: Optional local 24h target time (HH:MM) instead of duration.
+      required: false
+      selector:
+        text: {}
+    power_on:
+      name: Power On Device
+      description: When mode is 'unlock', whether to power on media_player devices immediately.
+      default: false
+      selector:
+        boolean: {}
 
 cancel_timer:
   name: Cancel Viewing Timer
-  description: Cancels an active countdown timer for a device.
+  description: Cancels an active countdown timer for a device (or 'all').
   fields:
     device_id:
       name: Device ID
-      description: The ID of the managed device.
+      description: The ID of the managed device, or 'all'.
       required: true
       selector:
         text: {}
@@ -59,6 +81,39 @@ set_lockout:
     power_on:
       name: Power On Device
       description: If unlocking, whether to also turn ON the media player or unpause network switch.
+      default: false
+      selector:
+        boolean: {}
+    rest_of_day:
+      name: Lock for Rest of Day
+      description: If locking, keep locked until midnight rollover (bypassing schedule auto-unlock today).
+      default: false
+      selector:
+        boolean: {}
+
+adjust_bonus_time:
+  name: Adjust Bonus Screen Time
+  description: Adds or resets bonus screen time minutes for today (auto-unlocks if locked solely by daily limit).
+  fields:
+    device_id:
+      name: Device ID
+      description: The ID of the managed device, or 'all'.
+      required: false
+      default: all
+      selector:
+        text: {}
+    delta_minutes:
+      name: Delta Minutes
+      description: Bonus minutes to add today.
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 240
+          unit_of_measurement: min
+    reset:
+      name: Reset Bonus Time
+      description: Reset today's bonus minutes back to 0.
       default: false
       selector:
         boolean: {}
@@ -93,5 +148,3 @@ reconcile_screen_time:
       default: all
       selector:
         text: {}
-
-

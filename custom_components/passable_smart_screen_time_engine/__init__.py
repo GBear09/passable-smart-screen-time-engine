@@ -12,7 +12,17 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 import voluptuous as vol
 
-from .const import CONF_DEVICES, CONF_GLOBAL_RESTRICTIONS, DOMAIN, FRONTEND_URL_PATH
+from .const import (
+    CONF_DEVICES,
+    CONF_GLOBAL_RESTRICTIONS,
+    DOMAIN,
+    FRONTEND_URL_PATH,
+    SIGNAL_DEVICE_ADDED,
+    SIGNAL_ENGINE_UPDATED,
+    TIMER_MODE_UNLOCK,
+    VALID_TIMER_MODES,
+    VERSION,
+)
 from .engine import PassableScreenTimeEngine
 from .storage import PassableScreenTimeStorage, get_default_device_data
 from .websocket import async_register_websocket_commands
@@ -81,9 +91,20 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> None:
         if not resources.loaded:
             await resources.async_load()
 
-        url_path = f"{FRONTEND_URL_PATH}?v=1.0.0"
+        url_path = f"{FRONTEND_URL_PATH}?v={VERSION}"
         for resource in resources.async_items():
-            if resource.get("url", "").startswith(FRONTEND_URL_PATH):
+            existing_url = resource.get("url", "")
+            if existing_url == url_path:
+                return
+            if existing_url.startswith(FRONTEND_URL_PATH):
+                res_id = resource.get("id")
+                if res_id:
+                    await resources.async_update_item(
+                        res_id, {"res_type": "module", "url": url_path}
+                    )
+                    _LOGGER.info(
+                        "Updated Lovelace resource URL to %s", url_path
+                    )
                 return
 
         await resources.async_create_item(
@@ -112,12 +133,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await engine.async_setup()
 
-    # Populate any explicitly selected devices from options/config flow
-    selected_devices = (
-        entry.options.get(CONF_DEVICES)
-        if CONF_DEVICES in entry.options
-        else entry.data.get(CONF_DEVICES, [])
-    )
+    # Populate selected devices: seed from entry.data only once; thereafter sync additions from entry.options
+    initial_seeded = bool(storage.data.get("initial_seed_complete", False))
+    if CONF_DEVICES in entry.options:
+        selected_devices = entry.options.get(CONF_DEVICES, [])
+    elif not initial_seeded:
+        selected_devices = entry.data.get(CONF_DEVICES, [])
+    else:
+        selected_devices = []
+
     for entity_id in selected_devices:
         dev_id = entity_id.split(".", 1)[-1]
         if dev_id not in storage.get_all_devices():
@@ -130,14 +154,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             payload = get_default_device_data(dev_id, entity_id, name=name)
             await storage.async_update_device(dev_id, payload)
 
-    # Populate any global restrictions
-    if CONF_GLOBAL_RESTRICTIONS in entry.options or CONF_GLOBAL_RESTRICTIONS in entry.data:
+    if not initial_seeded:
+        storage.data["initial_seed_complete"] = True
+        await storage.async_save()
+
+    # Populate global restrictions while preserving custom name/icon metadata
+    if CONF_GLOBAL_RESTRICTIONS in entry.options or (
+        not initial_seeded and CONF_GLOBAL_RESTRICTIONS in entry.data
+    ):
         restrictions_list = (
             entry.options.get(CONF_GLOBAL_RESTRICTIONS)
             if CONF_GLOBAL_RESTRICTIONS in entry.options
             else entry.data.get(CONF_GLOBAL_RESTRICTIONS, [])
         )
-        restrictions = [{"entity": e} for e in restrictions_list]
+        existing_meta = {
+            r.get("entity"): r
+            for r in storage.get_global_restrictions()
+            if r.get("entity")
+        }
+        restrictions = []
+        for ent in restrictions_list:
+            meta = existing_meta.get(ent, {})
+            item: dict[str, Any] = {"entity": ent}
+            if meta.get("name"):
+                item["name"] = meta["name"]
+            if meta.get("icon"):
+                item["icon"] = meta["icon"]
+            restrictions.append(item)
         await storage.async_update_global_restrictions(restrictions)
 
     # Automatically import legacy helpers ONLY once on initial setup if selected
@@ -195,9 +238,19 @@ def _async_register_services(
 
     async def handle_start_timer(call: ServiceCall) -> None:
         device_id = call.data["device_id"]
-        duration = call.data["duration"]
+        duration = call.data.get("duration", 20)
         unit = call.data.get("unit", "minutes")
-        await engine.async_start_device_timer(device_id, duration, unit)
+        mode = call.data.get("mode", TIMER_MODE_UNLOCK)
+        until_time = call.data.get("until_time")
+        power_on = call.data.get("power_on", False)
+        await engine.async_start_device_timer(
+            device_id,
+            duration=duration,
+            unit=unit,
+            mode=mode,
+            until_time=until_time,
+            power_on=power_on,
+        )
 
     async def handle_cancel_timer(call: ServiceCall) -> None:
         device_id = call.data["device_id"]
@@ -207,10 +260,23 @@ def _async_register_services(
         device_id = call.data.get("device_id", "all")
         locked = call.data["locked"]
         power_on = call.data.get("power_on", False)
+        rest_of_day = call.data.get("rest_of_day", False)
         if device_id in ("all", "*", "", None):
-            await engine.async_set_all_lockouts(locked, power_on)
+            await engine.async_set_all_lockouts(
+                locked, power_on=power_on, rest_of_day=rest_of_day
+            )
         else:
-            await engine.async_set_device_lockout(device_id, locked, power_on)
+            await engine.async_set_device_lockout(
+                device_id, locked, power_on=power_on, rest_of_day=rest_of_day
+            )
+
+    async def handle_adjust_bonus_time(call: ServiceCall) -> None:
+        device_id = call.data.get("device_id", "all")
+        delta_minutes = call.data.get("delta_minutes", 15)
+        reset = call.data.get("reset", False)
+        await engine.async_adjust_bonus_time(
+            device_id, delta_minutes=delta_minutes, reset=reset
+        )
 
     async def handle_toggle_all_lockouts(call: ServiceCall) -> None:
         await engine.async_toggle_all_lockouts()
@@ -219,6 +285,11 @@ def _async_register_services(
         count = await engine.storage.async_import_legacy_helpers()
         engine.async_rebuild_device_listeners()
         await engine.async_evaluate_schedules()
+        for did in engine.storage.get_all_devices():
+            from homeassistant.helpers.dispatcher import async_dispatcher_send
+            async_dispatcher_send(hass, SIGNAL_DEVICE_ADDED, did)
+        from homeassistant.helpers.dispatcher import async_dispatcher_send
+        async_dispatcher_send(hass, SIGNAL_ENGINE_UPDATED)
         _LOGGER.info(
             "Legacy helpers import service finished: %s devices imported", count
         )
@@ -230,8 +301,11 @@ def _async_register_services(
         schema=vol.Schema(
             {
                 vol.Required("device_id"): cv.string,
-                vol.Required("duration"): vol.Coerce(float),
+                vol.Optional("duration", default=20): vol.Coerce(float),
                 vol.Optional("unit", default="minutes"): cv.string,
+                vol.Optional("mode", default=TIMER_MODE_UNLOCK): vol.In(VALID_TIMER_MODES),
+                vol.Optional("until_time"): vol.Any(cv.string, None),
+                vol.Optional("power_on", default=False): cv.boolean,
             }
         ),
     )
@@ -252,6 +326,20 @@ def _async_register_services(
                 vol.Optional("device_id", default="all"): cv.string,
                 vol.Required("locked"): cv.boolean,
                 vol.Optional("power_on", default=False): cv.boolean,
+                vol.Optional("rest_of_day", default=False): cv.boolean,
+            }
+        ),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "adjust_bonus_time",
+        handle_adjust_bonus_time,
+        schema=vol.Schema(
+            {
+                vol.Optional("device_id", default="all"): cv.string,
+                vol.Optional("delta_minutes", default=15): vol.Coerce(int),
+                vol.Optional("reset", default=False): cv.boolean,
             }
         ),
     )
@@ -308,5 +396,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
+    """Reload config entry unless triggered by internal storage-to-options sync."""
+    engine = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if engine and getattr(engine, "_syncing_options", False):
+        return
     await hass.config_entries.async_reload(entry.entry_id)

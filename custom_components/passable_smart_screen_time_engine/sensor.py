@@ -17,8 +17,18 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import homeassistant.util.dt as dt_util
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATED, SIGNAL_ENGINE_UPDATED
-from .engine import PassableScreenTimeEngine
+from .const import (
+    DOMAIN,
+    SIGNAL_DEVICE_ADDED,
+    SIGNAL_DEVICE_UPDATED,
+    SIGNAL_ENGINE_UPDATED,
+    VERSION,
+)
+from .engine import (
+    PassableScreenTimeEngine,
+    _get_device_rules,
+    compute_effective_daily_limit,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,13 +52,33 @@ async def async_setup_entry(
     """Set up screen time sensors from a config entry."""
     engine: PassableScreenTimeEngine = hass.data[DOMAIN][entry.entry_id]
     devices = engine.storage.get_all_devices()
+    added_ids: set[str] = set()
 
     entities: list[SensorEntity] = []
-    for dev_id, dev_data in devices.items():
+    for dev_id in devices:
+        added_ids.add(dev_id)
         entities.append(PassableScreenTimeUsageSensor(engine, dev_id))
         entities.append(PassableScreenTimeAppSensor(engine, dev_id))
 
     async_add_entities(entities)
+
+    @callback
+    def _handle_device_added(dev_id: str) -> None:
+        if not dev_id or dev_id in added_ids:
+            return
+        if not engine.storage.get_device(dev_id):
+            return
+        added_ids.add(dev_id)
+        async_add_entities(
+            [
+                PassableScreenTimeUsageSensor(engine, dev_id),
+                PassableScreenTimeAppSensor(engine, dev_id),
+            ]
+        )
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_DEVICE_ADDED, _handle_device_added)
+    )
 
 
 class PassableScreenTimeUsageSensor(SensorEntity):
@@ -72,7 +102,7 @@ class PassableScreenTimeUsageSensor(SensorEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property
@@ -90,7 +120,8 @@ class PassableScreenTimeUsageSensor(SensorEntity):
         track_st = dev.get("track_screen_time", True)
         daily_limit_en = dev.get("daily_limit_enabled", True)
         mins = int(dev.get("screen_time_today_minutes", 0)) if track_st else 0
-        limit = dev.get("daily_limit_minutes", 120) if daily_limit_en else None
+        effective_limit = compute_effective_daily_limit(dev, dt_util.now())
+        limit = effective_limit if daily_limit_en else None
         pct = (
             round((mins / limit) * 100, 1)
             if (daily_limit_en and limit and limit > 0)
@@ -116,11 +147,18 @@ class PassableScreenTimeUsageSensor(SensorEntity):
             "formatted_screen_time": _format_minutes(mins) if track_st else "Disabled",
             "track_screen_time": track_st,
             "daily_limit_enabled": daily_limit_en,
-            "daily_limit_minutes": limit,
+            "daily_limit_minutes": dev.get("daily_limit_minutes", 120) if daily_limit_en else None,
+            "effective_daily_limit_minutes": effective_limit,
+            "bonus_minutes_today": int(dev.get("bonus_minutes_today") or 0),
             "percent_of_limit": pct,
             "timer_active": timer_active,
+            "timer_mode": dev.get("timer_mode"),
             "timer_expires_at": expires_str,
             "timer_remaining_seconds": remaining_secs,
+            "locked_reason": dev.get("locked_reason"),
+            "active_schedule_name": dev.get("active_schedule_name"),
+            "lock_until_midnight": dev.get("lock_until_midnight", False),
+            "schedules_count": len(_get_device_rules(dev)),
             "active_app": dev.get("active_app", "None"),
             "apps_used_today": dev.get("apps_used_today", []),
             "target_entity": dev.get("target_entity"),
@@ -165,7 +203,7 @@ class PassableScreenTimeAppSensor(SensorEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "passable_smart_screen_time_engine"
+VERSION = "2.0.0"
 STORAGE_KEY = "passable_smart_screen_time_engine"
 STORAGE_VERSION = 1
 
@@ -15,6 +16,24 @@ DEFAULT_TIMER_DURATION = 20  # minutes ("One More Show")
 
 RECURRENCE_WEEKLY = "weekly"
 RECURRENCE_BIWEEKLY = "biweekly"
+
+TIMER_MODE_UNLOCK = "unlock"
+TIMER_MODE_LOCK = "lock"
+TIMER_MODE_WIND_DOWN = "wind_down"
+VALID_TIMER_MODES = (
+    TIMER_MODE_UNLOCK,
+    TIMER_MODE_LOCK,
+    TIMER_MODE_WIND_DOWN,
+)
+
+REASON_MANUAL = "manual"
+REASON_SCHEDULE = "schedule"
+REASON_TIMER = "timer"
+REASON_DAILY_LIMIT = "daily_limit"
+REASON_REST_OF_DAY = "rest_of_day"
+REASON_RESTRICTION = "restriction"
+
+DEVICE_CATEGORIES = ("tv", "tablet", "gaming", "network", "other")
 
 DAYS_OF_WEEK = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 DAYS_OF_WEEK_FULL = [
@@ -31,6 +50,7 @@ DEVICE_TYPE_MEDIA_PLAYER = "media_player"
 DEVICE_TYPE_NETWORK_SWITCH = "network_switch"
 
 SIGNAL_DEVICE_UPDATED = "passable_screen_time_device_updated"
+SIGNAL_DEVICE_ADDED = "passable_screen_time_device_added"
 SIGNAL_ENGINE_UPDATED = "passable_screen_time_engine_updated"
 SIGNAL_STORAGE_UPDATED = "passable_screen_time_storage_updated"
 

@@ -13,9 +13,15 @@ Runs natively on Home Assistant Core's asynchronous engine with atomic `.storage
 ## ⚙️ Key Features
 
 - **📺 Universal Media & Network Supervision**: Unified supervision across **Media Players** (Smart TVs, Android TVs, Apple TVs, webOS) and **Network Switches** (e.g. Eero Wi-Fi pause for personal tablets).
-- **⏱️ Persistent "One More Show" Timers**: Start temporary viewing windows (`15m`, `20m`, `30m`, `45m`, custom). The engine unlocks and powers on the device, tracks expiration with UTC timestamps that **survive Home Assistant reboots**, and cleanly shuts off / locks the device upon expiry.
-- **📅 7-Day Downtime Schedule Engine**: Multi-day circular selection bubbles (`S M T W T F S`) with weekly and bi-weekly recurrence. Robust Python evaluation seamlessly handles overnight downtime spans past midnight.
-- **📊 Live Daily Screen Time Telemetry**: In-memory minute-by-minute tracking exposes `sensor.<device>_screen_time_today` with automatic rolling midnight resets. Usable across your dashboards and automations with zero database query lag.
+- **⏱️ Four Flexible Timer & Lockout Modes**:
+  - **Allow Viewing ("One More Show")**: Temporary viewing windows (`15m`, `20m`, `30m`, `45m`, custom, or `Until HH:MM`) with optional power-on that **survive Home Assistant reboots** and auto-lock upon expiry.
+  - **Temporary Lockout**: Lock immediately for `30m`, `1h`, custom, or `Until HH:MM` and auto-unlock when done.
+  - **Wind-Down Countdown**: Keep an active screen unlocked for `5m–30m` to finish an episode before auto-locking.
+  - **Rest-of-Day Lockout**: Lock until midnight rollover (`00:00`) without being overridden by daytime schedule transitions.
+- **📅 Multi-Window Named Downtime Schedules**: Multiple named rules per device (`School Night Bedtime`, `Weekend Bedtime`, `School Hours`, etc.), circular day bubbles (`S M T W T F S`), quick day presets (`Sun–Thu`, `Mon–Fri`), weekly/bi-weekly recurrence, accurate post-midnight overnight rollover, and 1-tap **Copy to Devices**.
+- **📊 Weekday/Weekend Limits, Bonus Time & Live Telemetry**: Uniform or weekday/weekend daily budgets, `+15m` bonus time, minute-by-minute tracking (`sensor.<device>_screen_time_today`), streaming app decoding, and midnight rollover.
+- **🛡️ Wall-Panel Parental PIN & In-Card Setup**: Optional 4–6 digit Parental PIN protecting unlocks, timers, and settings with a 60-second unlocked grace session, plus full in-card device onboarding and global restriction management.
+- **📦 Passable Suite Summary Card**: Compact, expandable wall-panel-ready card (`tiles`, `rows`, or `rings`) with an inline quick-drawer and a 4-tab Command Center popup (`Controls`, `Timers`, `Schedules`, `Activity & Setup`).
 - **🎯 Streaming App Intelligence**: Automatically decodes Android TV / Google TV package IDs and webOS sources into clean brand titles (`Netflix`, `Disney+`, `YouTube`, `Prime Video`, `Plex`, `PBS KIDS`).
 - **🛡️ Aggressive Lockout Enforcement**: Event-driven Python listeners intercept state bypasses immediately. If a child attempts to turn a restricted TV back on, the engine instantly forces it back off.
 - **🛑 External Household Restrictions**: Integrate global household rules (e.g. *Hudson Potty Request*, *Homework Time*) with custom TTS audio announcements.
@@ -103,8 +109,15 @@ The card is automatically registered as a Lovelace resource upon integration set
 
 ```yaml
 type: custom:passable-screen-time-card
-title: Screen Time & Downtime
-subtitle: Family Media Supervision
+title: Screen Time
+display_mode: summary # or 'full'
+layout: tiles         # 'tiles', 'rows', or 'rings'
+show_header: false
+show_summary_strip: true
+show_footer_strip: true
+show_stats_button: true
+require_pin: auto     # 'auto', true, or false
+hide_admin_setup: false
 ```
 
 *(Note: The card also responds to `type: custom:passable-device-lockout-card` for 100% backwards compatibility).*

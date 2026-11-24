@@ -12,8 +12,14 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATED, SIGNAL_ENGINE_UPDATED
-from .engine import PassableScreenTimeEngine
+from .const import (
+    DOMAIN,
+    SIGNAL_DEVICE_ADDED,
+    SIGNAL_DEVICE_UPDATED,
+    SIGNAL_ENGINE_UPDATED,
+    VERSION,
+)
+from .engine import PassableScreenTimeEngine, _get_device_rules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,13 +32,33 @@ async def async_setup_entry(
     """Set up screen time switches from a config entry."""
     engine: PassableScreenTimeEngine = hass.data[DOMAIN][entry.entry_id]
     devices = engine.storage.get_all_devices()
+    added_ids: set[str] = set()
 
     entities: list[SwitchEntity] = [PassableMasterLockoutSwitch(engine)]
-    for dev_id, dev_data in devices.items():
+    for dev_id in devices:
+        added_ids.add(dev_id)
         entities.append(PassableLockoutSwitch(engine, dev_id))
         entities.append(PassableScheduleSwitch(engine, dev_id))
 
     async_add_entities(entities)
+
+    @callback
+    def _handle_device_added(dev_id: str) -> None:
+        if not dev_id or dev_id in added_ids:
+            return
+        if not engine.storage.get_device(dev_id):
+            return
+        added_ids.add(dev_id)
+        async_add_entities(
+            [
+                PassableLockoutSwitch(engine, dev_id),
+                PassableScheduleSwitch(engine, dev_id),
+            ]
+        )
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_DEVICE_ADDED, _handle_device_added)
+    )
 
 
 class PassableLockoutSwitch(SwitchEntity):
@@ -52,7 +78,7 @@ class PassableLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property
@@ -65,6 +91,19 @@ class PassableLockoutSwitch(SwitchEntity):
     def icon(self) -> str:
         """Return lock icon according to state."""
         return "mdi:lock" if self.is_on else "mdi:lock-open-variant"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return lockout diagnostics and active timer/schedule metadata."""
+        dev = self.engine.storage.get_device(self.device_id)
+        return {
+            "locked_reason": dev.get("locked_reason"),
+            "active_schedule_name": dev.get("active_schedule_name"),
+            "lock_until_midnight": dev.get("lock_until_midnight", False),
+            "timer_mode": dev.get("timer_mode"),
+            "timer_expires_at": dev.get("timer_expires_at"),
+            "schedules_count": len(_get_device_rules(dev)),
+        }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Lock the device."""
@@ -112,7 +151,7 @@ class PassableScheduleSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property
@@ -177,7 +216,7 @@ class PassableMasterLockoutSwitch(SwitchEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property

@@ -2,6 +2,26 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [2.0.0] - 2026-11-24
+
+### ✨ Added & Redesigned (Passable Suite Summary Card & Command Center)
+- **Passable Suite Design System Parity**: Completely redesigned `passable-screen-time-card.js` to match the Passable HVAC, Smart Lighting, and Vehicle cards with a wall-panel-ready compact Summary Mode (`display_mode: "summary"`) and optional embedded full view (`display_mode: "full"`).
+- **Summary Strip & Three Compact Device Layouts**:
+  - Top summary strip showing lock/watch counts, next active timer countdown, active household restriction pills, 1-tap `Lock All` / `Unlock All`, Activity shortcut, and Command Center launcher.
+  - Selectable device layouts: **2-Column Tiles** (`tiles`), **Stacked Rows** (`rows`), and **Circular Progress Rings** (`rings` with tap-to-expand and hold-to-lock).
+- **Inline Expandable Quick-Drawer**: Tap any device tile (or the summary strip count pill) to expand quick controls directly inside the card: `Lock Now` / `Unlock`, `Lock 30m`, `Lock 1h`, `Rest of Day`, `Allow 15m / 20m / 30m / 45m`, `Wind-Down 5m / 10m / 15m`, `+15m Limit` bonus, Power/Wi-Fi toggle, and active timer controls (`+5m`, `+15m`, `Cancel`).
+- **4-Tab Command Center Modal** (`Controls`, `Timers`, `Schedules`, `Activity & Setup`):
+  - **All 4 Timer & Instant Lockout Modes**: Temporary Viewing (`unlock`), Temporary Lockout (`lock` for `N` min/hrs or `until_time`), Wind-Down Countdown (`wind_down` before auto-lock), and Rest-of-Day Lockout (`rest_of_day` clearing at midnight). Supports single devices or `All Screens`.
+  - **Multi-Window Named Schedules**: Configure multiple named downtime rules per device with starter templates (`School Night Bedtime`, `Weekend Bedtime`, `School Hours`, `Dinner Time`), day-group presets (`Sun–Thu`, `Mon–Fri`, `Fri–Sat`), overnight badge, bi-weekly cycle selector, and 1-tap **Copy to Devices**.
+  - **Weekday / Weekend Daily Limits & Bonus Time**: Split daily budgets (`Mon–Fri` vs `Sat–Sun`) and grant `+15m` today-only bonus minutes without altering base limits.
+  - **In-Card Device Onboarding & Wall-Panel Parental PIN**: Add/remove managed devices, customize icons/categories, manage global household restrictions, and protect wall-panel unlocks, timers, and settings with a salted SHA-256 4–6 digit Parental PIN (`60s` grace session).
+- **Real-Time WebSocket Push Subscription**: Added `passable_smart_screen_time_engine/subscribe` with 150ms debounced snapshots and dynamic HA entity registration (`SIGNAL_DEVICE_ADDED`).
+
+### 🐛 Fixed
+- **Overnight Schedule Weekday Rollover**: Fixed overnight schedule evaluation (`start > end`, e.g., `20:00–07:00`) so post-midnight hours (`00:00–07:00`) correctly check yesterday's scheduled weekday and bi-weekly cycle.
+- **Daily Limit Re-Lock Loop**: Devices manually unlocked at their daily limit or running an active viewing/wind-down timer no longer re-lock 60 seconds later during the periodic minute check.
+- **Device Deletion & Options Sync**: Deleting or adding devices from the dashboard card now syncs `ConfigEntry.options` cleanly so deleted devices never reappear after a Home Assistant restart.
+
 ## [1.4.5] - 2026-11-02
 
 ### 🐛 Fixed

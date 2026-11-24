@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
+import secrets
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -13,44 +16,157 @@ from .const import (
     DAYS_OF_WEEK,
     DEFAULT_DAILY_LIMIT,
     DEFAULT_TIMER_DURATION,
+    DEVICE_CATEGORIES,
     DEVICE_TYPE_MEDIA_PLAYER,
     DEVICE_TYPE_NETWORK_SWITCH,
+    REASON_MANUAL,
+    REASON_SCHEDULE,
+    RECURRENCE_BIWEEKLY,
     RECURRENCE_WEEKLY,
     STORAGE_KEY,
     STORAGE_VERSION,
+    TIMER_MODE_UNLOCK,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_hhmm(value: Any, fallback: str) -> str:
+    """Validate and normalize an HH:MM string."""
+    if not isinstance(value, str):
+        return fallback
+    parts = value.strip().split(":")
+    if len(parts) < 2:
+        return fallback
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+    except (TypeError, ValueError):
+        pass
+    return fallback
+
+
+def normalize_schedule_rule(rule: dict[str, Any], index: int = 0) -> dict[str, Any]:
+    """Normalize a single schedule window dictionary."""
+    if not isinstance(rule, dict):
+        rule = {}
+
+    raw_id = str(rule.get("id") or "").strip()
+    rule_id = raw_id or f"sched_{index + 1}"
+
+    raw_name = str(rule.get("name") or "").strip()
+    rule_name = raw_name or f"Schedule {index + 1}"
+
+    raw_days = rule.get("days")
+    if isinstance(raw_days, list):
+        day_set = {str(d).lower() for d in raw_days}
+        days = [d for d in DAYS_OF_WEEK if d in day_set]
+    else:
+        days = list(DAYS_OF_WEEK)
+
+    recurrence = (
+        RECURRENCE_BIWEEKLY
+        if rule.get("recurrence") == RECURRENCE_BIWEEKLY
+        else RECURRENCE_WEEKLY
+    )
+    anchor_date = rule.get("anchor_date") if recurrence == RECURRENCE_BIWEEKLY else None
+    if anchor_date is not None and not isinstance(anchor_date, str):
+        anchor_date = None
+
+    return {
+        "id": rule_id,
+        "name": rule_name,
+        "enabled": bool(rule.get("enabled", True)),
+        "days": days,
+        "start": _normalize_hhmm(rule.get("start"), "20:00"),
+        "end": _normalize_hhmm(rule.get("end"), "07:00"),
+        "recurrence": recurrence,
+        "anchor_date": anchor_date,
+    }
+
+
+def _default_security_data() -> dict[str, Any]:
+    """Return default security/PIN settings."""
+    return {
+        "pin_enabled": False,
+        "pin_hash": None,
+        "pin_salt": None,
+        "require_pin_for_unlock": True,
+        "require_pin_for_timers": True,
+        "require_pin_for_settings": True,
+    }
+
+
+def _hash_pin(pin: str, salt: str) -> str:
+    """Hash a PIN with a per-user salt using SHA-256."""
+    return hashlib.sha256(f"{salt}:{pin}".encode("utf-8")).hexdigest()
+
+
 def get_default_device_data(
-    device_id: str, target_entity: str, name: str | None = None
+    device_id: str,
+    target_entity: str,
+    name: str | None = None,
+    icon: str | None = None,
+    device_category: str | None = None,
 ) -> dict[str, Any]:
     """Return default configuration for a managed device."""
     is_switch = target_entity.startswith("switch.")
     clean_name = name or target_entity.split(".", 1)[-1].replace("_", " ").title()
+    category = (
+        device_category
+        if device_category in DEVICE_CATEGORIES
+        else ("network" if is_switch else "tv")
+    )
+    default_icon = icon or ("mdi:tablet-ipad" if is_switch else "mdi:television")
+    default_schedule = normalize_schedule_rule(
+        {
+            "id": "sched_default",
+            "name": "Downtime",
+            "enabled": True,
+            "days": list(DAYS_OF_WEEK),
+            "start": "20:00",
+            "end": "07:00",
+            "recurrence": RECURRENCE_WEEKLY,
+            "anchor_date": None,
+        },
+        index=0,
+    )
     return {
         "device_id": device_id,
         "target_entity": target_entity,
         "name": clean_name,
+        "icon": default_icon,
+        "device_category": category,
         "device_type": (
             DEVICE_TYPE_NETWORK_SWITCH if is_switch else DEVICE_TYPE_MEDIA_PLAYER
         ),
         "locked": False,
         "locked_by_schedule": False,
+        "locked_reason": None,
+        "active_schedule_name": None,
+        "lock_until_midnight": False,
         "manual_unlock_override": False,
         "schedule_enabled": True,
-        "schedule_recurrence": RECURRENCE_WEEKLY,
-        "schedule_days": list(DAYS_OF_WEEK),
-        "schedule_start": "08:00",
-        "schedule_end": "20:00",
-        "schedule_anchor_date": None,
+        "schedules": [default_schedule],
+        "schedule_recurrence": default_schedule["recurrence"],
+        "schedule_days": list(default_schedule["days"]),
+        "schedule_start": default_schedule["start"],
+        "schedule_end": default_schedule["end"],
+        "schedule_anchor_date": default_schedule["anchor_date"],
         "timer_expires_at": None,
+        "timer_mode": None,
         "timer_duration": DEFAULT_TIMER_DURATION,
         "timer_unit": "minutes",
         "track_screen_time": not is_switch,
         "daily_limit_enabled": not is_switch,
+        "daily_limit_mode": "uniform",
         "daily_limit_minutes": DEFAULT_DAILY_LIMIT,
+        "daily_limit_weekday_minutes": DEFAULT_DAILY_LIMIT,
+        "daily_limit_weekend_minutes": 180,
+        "bonus_minutes_today": 0,
+        "daily_limit_overridden_today": False,
         "screen_time_entity": None,
         "screen_time_today_minutes": 0,
         "screen_time_date": None,
@@ -70,6 +186,8 @@ class PassableScreenTimeStorage:
             "devices": {},
             "global_restrictions": [],
             "default_daily_limit": DEFAULT_DAILY_LIMIT,
+            "security": _default_security_data(),
+            "initial_seed_complete": False,
         }
 
     async def async_load(self) -> dict[str, Any]:
@@ -82,9 +200,22 @@ class PassableScreenTimeStorage:
             if "global_restrictions" not in self.data:
                 self.data["global_restrictions"] = []
 
-        # Automatic migration & cleanup of legacy/accidental entries
         modified = False
+        if "security" not in self.data or not isinstance(self.data["security"], dict):
+            self.data["security"] = _default_security_data()
+            modified = True
+        else:
+            sec_defaults = _default_security_data()
+            for k, v in sec_defaults.items():
+                if k not in self.data["security"]:
+                    self.data["security"][k] = v
+                    modified = True
+
+        # Automatic migration & cleanup of legacy/accidental entries
         devices = self.data.setdefault("devices", {})
+        if devices and not self.data.get("initial_seed_complete"):
+            self.data["initial_seed_complete"] = True
+            modified = True
 
         # 1. Clean up speaker devices or MA virtual players imported by accident
         for dev_id, dev in list(devices.items()):
@@ -135,12 +266,26 @@ class PassableScreenTimeStorage:
                 else:
                     seen_targets[target] = dev_id
 
-        # 3. Ensure track_screen_time, daily_limit_enabled, and manual_unlock_override exist for all devices
+        # 3. Ensure v2 schema fields exist for all devices (non-destructive migration)
         for dev_id, dev in devices.items():
             is_sw = (
                 dev.get("device_type") == DEVICE_TYPE_NETWORK_SWITCH
                 or dev.get("target_entity", "").startswith("switch.")
             )
+            if "device_category" not in dev:
+                dev["device_category"] = "network" if is_sw else "tv"
+                modified = True
+            if "icon" not in dev or not dev.get("icon"):
+                cat = dev.get("device_category", "tv")
+                icon_map = {
+                    "tv": "mdi:television",
+                    "tablet": "mdi:tablet-ipad",
+                    "gaming": "mdi:controller",
+                    "network": "mdi:wifi-lock",
+                    "other": "mdi:devices",
+                }
+                dev["icon"] = icon_map.get(cat, "mdi:tablet-ipad" if is_sw else "mdi:television")
+                modified = True
             if "track_screen_time" not in dev:
                 dev["track_screen_time"] = not is_sw
                 modified = True
@@ -151,12 +296,75 @@ class PassableScreenTimeStorage:
             if "daily_limit_enabled" not in dev:
                 dev["daily_limit_enabled"] = not is_sw
                 modified = True
+            if "daily_limit_mode" not in dev:
+                dev["daily_limit_mode"] = "uniform"
+                modified = True
+            if "daily_limit_weekday_minutes" not in dev:
+                dev["daily_limit_weekday_minutes"] = int(
+                    dev.get("daily_limit_minutes") or DEFAULT_DAILY_LIMIT
+                )
+                modified = True
+            if "daily_limit_weekend_minutes" not in dev:
+                dev["daily_limit_weekend_minutes"] = max(
+                    180, int(dev.get("daily_limit_minutes") or DEFAULT_DAILY_LIMIT)
+                )
+                modified = True
+            if "bonus_minutes_today" not in dev:
+                dev["bonus_minutes_today"] = 0
+                modified = True
+            if "daily_limit_overridden_today" not in dev:
+                dev["daily_limit_overridden_today"] = False
+                modified = True
             if "screen_time_entity" not in dev:
                 dev["screen_time_entity"] = None
                 modified = True
             if "manual_unlock_override" not in dev:
                 dev["manual_unlock_override"] = False
                 modified = True
+            if "lock_until_midnight" not in dev:
+                dev["lock_until_midnight"] = False
+                modified = True
+            if "active_schedule_name" not in dev:
+                dev["active_schedule_name"] = None
+                modified = True
+            if "timer_mode" not in dev:
+                dev["timer_mode"] = (
+                    TIMER_MODE_UNLOCK if dev.get("timer_expires_at") else None
+                )
+                modified = True
+            if "locked_reason" not in dev:
+                if dev.get("locked"):
+                    dev["locked_reason"] = (
+                        REASON_SCHEDULE if dev.get("locked_by_schedule") else REASON_MANUAL
+                    )
+                else:
+                    dev["locked_reason"] = None
+                modified = True
+
+            if "schedules" not in dev or not isinstance(dev["schedules"], list):
+                legacy_rule = normalize_schedule_rule(
+                    {
+                        "id": "sched_default",
+                        "name": "Downtime",
+                        "enabled": True,
+                        "days": dev.get("schedule_days", list(DAYS_OF_WEEK)),
+                        "start": dev.get("schedule_start", "08:00"),
+                        "end": dev.get("schedule_end", "20:00"),
+                        "recurrence": dev.get("schedule_recurrence", RECURRENCE_WEEKLY),
+                        "anchor_date": dev.get("schedule_anchor_date"),
+                    },
+                    index=0,
+                )
+                dev["schedules"] = [legacy_rule]
+                modified = True
+            else:
+                normalized_rules = [
+                    normalize_schedule_rule(r, idx)
+                    for idx, r in enumerate(dev["schedules"])
+                ]
+                if normalized_rules != dev["schedules"]:
+                    dev["schedules"] = normalized_rules
+                    modified = True
 
         if modified:
             await self.async_save()
@@ -176,7 +384,7 @@ class PassableScreenTimeStorage:
         return self.data.get("devices", {})
 
     def get_device(self, device_id: str) -> dict[str, Any]:
-        """Get data for a specific device, or return default."""
+        """Get data for a specific device, or return empty dict."""
         return self.data.get("devices", {}).get(device_id, {})
 
     async def async_update_device(
@@ -206,6 +414,67 @@ class PassableScreenTimeStorage:
         """Update global restrictions list and save."""
         self.data["global_restrictions"] = restrictions
         await self.async_save()
+
+    # =========================================================================
+    # PARENTAL PIN SECURITY
+    # =========================================================================
+
+    def get_public_security_settings(self) -> dict[str, Any]:
+        """Return public security configuration without exposing PIN hash or salt."""
+        sec = self.data.get("security", {})
+        has_pin = bool(sec.get("pin_hash") and sec.get("pin_salt"))
+        return {
+            "pin_enabled": bool(sec.get("pin_enabled", False) and has_pin),
+            "has_pin": has_pin,
+            "require_pin_for_unlock": bool(sec.get("require_pin_for_unlock", True)),
+            "require_pin_for_timers": bool(sec.get("require_pin_for_timers", True)),
+            "require_pin_for_settings": bool(sec.get("require_pin_for_settings", True)),
+        }
+
+    def verify_pin(self, pin: str) -> bool:
+        """Verify a candidate PIN in constant time."""
+        sec = self.data.get("security", {})
+        pin_hash = sec.get("pin_hash")
+        pin_salt = sec.get("pin_salt")
+        if not pin_hash or not pin_salt or not isinstance(pin, str):
+            return False
+        candidate_hash = _hash_pin(pin.strip(), pin_salt)
+        return hmac.compare_digest(candidate_hash, pin_hash)
+
+    async def async_update_security_settings(
+        self,
+        pin: str | None = None,
+        pin_enabled: bool | None = None,
+        require_pin_for_unlock: bool | None = None,
+        require_pin_for_timers: bool | None = None,
+        require_pin_for_settings: bool | None = None,
+    ) -> dict[str, Any]:
+        """Update Parental PIN and lock-policy settings and persist."""
+        sec = self.data.setdefault("security", _default_security_data())
+        if pin is not None:
+            clean_pin = pin.strip()
+            if clean_pin == "":
+                sec["pin_hash"] = None
+                sec["pin_salt"] = None
+                sec["pin_enabled"] = False
+            else:
+                salt = secrets.token_hex(16)
+                sec["pin_salt"] = salt
+                sec["pin_hash"] = _hash_pin(clean_pin, salt)
+                if pin_enabled is None:
+                    sec["pin_enabled"] = True
+
+        if pin_enabled is not None:
+            sec["pin_enabled"] = bool(pin_enabled and sec.get("pin_hash"))
+        if require_pin_for_unlock is not None:
+            sec["require_pin_for_unlock"] = bool(require_pin_for_unlock)
+        if require_pin_for_timers is not None:
+            sec["require_pin_for_timers"] = bool(require_pin_for_timers)
+        if require_pin_for_settings is not None:
+            sec["require_pin_for_settings"] = bool(require_pin_for_settings)
+
+        await self.async_save()
+        return self.get_public_security_settings()
 
     async def async_import_legacy_helpers(self) -> int:
         """Automatically import legacy input_text and input_boolean helpers into .storage."""
@@ -353,16 +622,48 @@ class PassableScreenTimeStorage:
             existing_locked_by_sched = existing_dev.get("locked_by_schedule", False)
             existing_track_st = existing_dev.get("track_screen_time")
             existing_dl_en = existing_dev.get("daily_limit_enabled")
+            existing_dl_mode = existing_dev.get("daily_limit_mode")
             existing_dl_mins = existing_dev.get("daily_limit_minutes")
+            existing_dl_wd = existing_dev.get("daily_limit_weekday_minutes")
+            existing_dl_we = existing_dev.get("daily_limit_weekend_minutes")
             existing_st_ent = existing_dev.get("screen_time_entity")
+            existing_icon = existing_dev.get("icon")
+            existing_cat = existing_dev.get("device_category")
 
             device_payload = get_default_device_data(
-                device_id=final_dev_id, target_entity=target_entity, name=friendly_name
+                device_id=final_dev_id,
+                target_entity=target_entity,
+                name=friendly_name,
+                icon=existing_icon,
+                device_category=existing_cat,
+            )
+            imported_rule = normalize_schedule_rule(
+                {
+                    "id": "sched_default",
+                    "name": "Downtime",
+                    "enabled": True,
+                    "days": sched_days,
+                    "start": start_time,
+                    "end": end_time,
+                    "recurrence": RECURRENCE_WEEKLY,
+                    "anchor_date": None,
+                },
+                index=0,
+            )
+            existing_schedules = existing_dev.get("schedules")
+            schedules_to_save = (
+                existing_schedules
+                if isinstance(existing_schedules, list) and len(existing_schedules) > 1
+                else [imported_rule]
             )
             updates: dict[str, Any] = {
                 "locked": is_locked,
                 "locked_by_schedule": existing_locked_by_sched,
+                "locked_reason": (
+                    REASON_SCHEDULE if (is_locked and existing_locked_by_sched) else (REASON_MANUAL if is_locked else None)
+                ),
                 "schedule_enabled": is_sched_en,
+                "schedules": schedules_to_save,
                 "schedule_days": sched_days,
                 "schedule_start": start_time,
                 "schedule_end": end_time,
@@ -375,8 +676,14 @@ class PassableScreenTimeStorage:
                 updates["track_screen_time"] = existing_track_st
             if existing_dl_en is not None:
                 updates["daily_limit_enabled"] = existing_dl_en
+            if existing_dl_mode is not None:
+                updates["daily_limit_mode"] = existing_dl_mode
             if existing_dl_mins is not None:
                 updates["daily_limit_minutes"] = existing_dl_mins
+            if existing_dl_wd is not None:
+                updates["daily_limit_weekday_minutes"] = existing_dl_wd
+            if existing_dl_we is not None:
+                updates["daily_limit_weekend_minutes"] = existing_dl_we
             if existing_st_ent is not None:
                 updates["screen_time_entity"] = existing_st_ent
 

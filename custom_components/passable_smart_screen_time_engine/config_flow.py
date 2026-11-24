@@ -129,11 +129,21 @@ class PassableScreenTimeOptionsFlow(config_entries.OptionsFlow):
                     )
                     await engine.storage.async_update_device(dev_id, payload)
 
-            # Update restrictions
-            restrictions = [
-                {"entity": e}
-                for e in user_input.get(CONF_GLOBAL_RESTRICTIONS, [])
-            ]
+            # Update restrictions while preserving custom name/icon metadata
+            existing_meta = {
+                r.get("entity"): r
+                for r in engine.storage.get_global_restrictions()
+                if r.get("entity")
+            }
+            restrictions = []
+            for ent in user_input.get(CONF_GLOBAL_RESTRICTIONS, []):
+                meta = existing_meta.get(ent, {})
+                item: dict[str, Any] = {"entity": ent}
+                if meta.get("name"):
+                    item["name"] = meta["name"]
+                if meta.get("icon"):
+                    item["icon"] = meta["icon"]
+                restrictions.append(item)
             await engine.storage.async_update_global_restrictions(restrictions)
 
             if user_input.get("import_helpers"):

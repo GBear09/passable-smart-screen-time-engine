@@ -20,6 +20,7 @@ from .const import (
     SIGNAL_DEVICE_UPDATED,
     SIGNAL_ENGINE_UPDATED,
     SIGNAL_STORAGE_UPDATED,
+    VERSION,
 )
 from .engine import PassableScreenTimeEngine
 
@@ -59,7 +60,7 @@ class PassableScreenTimeActiveLockoutsBinarySensor(BinarySensorEntity):
             name="Passable Smart Screen Time Engine",
             manufacturer="Passable",
             model="Screen Time & Lockout Hub",
-            sw_version="1.4.5",
+            sw_version=VERSION,
         )
 
     @property

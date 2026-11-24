@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Passable Smart Screen Time Engine",
-        "description": "Configure the smart TVs, media players, and personal devices you want to manage with automated downtime schedules and \"One More Show\" viewing timers.",
+        "description": "Configure the smart TVs, media players, and personal devices you want to manage with automated downtime schedules and flexible viewing/lockout timers.",
         "data": {
           "devices": "Managed Screen Time Devices",
           "global_restrictions": "Global Lockout Restrictions (Optional)",
@@ -43,12 +43,16 @@
   },
   "services": {
     "start_timer": {
-      "name": "Start Viewing Timer",
-      "description": "Starts a temporary countdown viewing timer (\"One More Show\") and unlocks the target device.",
+      "name": "Start Screen Time Timer",
+      "description": "Starts an unlock (\"One More Show\"), temporary lockout, or wind-down countdown timer for a device or all devices.",
       "fields": {
         "device_id": {
           "name": "Device ID",
-          "description": "The ID of the managed device (e.g., living_room_tv_2)."
+          "description": "The ID of the managed device (e.g., living_room_tv_2), or 'all'."
+        },
+        "mode": {
+          "name": "Timer Mode",
+          "description": "Timer mode: unlock, lock, or wind_down."
         },
         "duration": {
           "name": "Duration",
@@ -57,16 +61,24 @@
         "unit": {
           "name": "Unit",
           "description": "Duration unit (minutes or hours)."
+        },
+        "until_time": {
+          "name": "Until Time",
+          "description": "Optional local 24h target time (HH:MM) instead of duration."
+        },
+        "power_on": {
+          "name": "Power On Device",
+          "description": "When mode is 'unlock', whether to power on media_player devices immediately."
         }
       }
     },
     "cancel_timer": {
       "name": "Cancel Viewing Timer",
-      "description": "Cancels an active countdown timer for a device.",
+      "description": "Cancels an active countdown timer for a device (or 'all').",
       "fields": {
         "device_id": {
           "name": "Device ID",
-          "description": "The ID of the managed device."
+          "description": "The ID of the managed device, or 'all'."
         }
       }
     },
@@ -85,6 +97,28 @@
         "power_on": {
           "name": "Power On Device",
           "description": "If unlocking, whether to also turn ON the media player or unpause network switch."
+        },
+        "rest_of_day": {
+          "name": "Lock for Rest of Day",
+          "description": "If locking, keep locked until midnight rollover."
+        }
+      }
+    },
+    "adjust_bonus_time": {
+      "name": "Adjust Bonus Screen Time",
+      "description": "Adds or resets bonus daily screen time minutes for today.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the managed device, or 'all'."
+        },
+        "delta_minutes": {
+          "name": "Delta Minutes",
+          "description": "Bonus minutes to add today."
+        },
+        "reset": {
+          "name": "Reset Bonus Time",
+          "description": "Reset today's bonus minutes back to 0."
         }
       }
     },
@@ -95,6 +129,26 @@
     "import_legacy_helpers": {
       "name": "Import Legacy Helpers",
       "description": "Scans Home Assistant for legacy device_lockout helpers (input_text and input_boolean) and imports schedules into storage."
+    },
+    "delete_device": {
+      "name": "Delete Managed Device",
+      "description": "Permanently removes a device from the Screen Time Engine and cleans up its associated entities.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the device to delete."
+        }
+      }
+    },
+    "reconcile_screen_time": {
+      "name": "Reconcile Screen Time",
+      "description": "Pulls state history directly from Home Assistant Recorder to accurately backfill cumulative screen time today.",
+      "fields": {
+        "device_id": {
+          "name": "Device ID",
+          "description": "The ID of the managed device (or 'all')."
+        }
+      }
     }
   }
 }

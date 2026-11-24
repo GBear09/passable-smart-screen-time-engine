@@ -111,10 +111,8 @@ The card is automatically registered as a Lovelace resource upon integration set
 type: custom:passable-screen-time-card
 title: Screen Time
 display_mode: summary # or 'full'
-layout: tiles         # 'tiles', 'rows', or 'rings'
+layout: compact       # 'compact', 'strip', 'active', 'tiles', 'rows', or 'rings'
 show_header: false
-show_summary_strip: true
-show_footer_strip: true
 show_stats_button: true
 require_pin: auto     # 'auto', true, or false
 hide_admin_setup: false

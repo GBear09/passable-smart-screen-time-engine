@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "passable_smart_screen_time_engine"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 STORAGE_KEY = "passable_smart_screen_time_engine"
 STORAGE_VERSION = 1
 

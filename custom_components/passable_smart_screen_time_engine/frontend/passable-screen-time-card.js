@@ -6,7 +6,7 @@
  * Version 2.0.0 - Passable Suite Summary Card + Inline Quick-Drawer + 4-Tab Command Center
  */
 
-const CARD_VERSION = "2.0.0";
+const CARD_VERSION = "2.1.0";
 const ENGINE_DOMAIN = "passable_smart_screen_time_engine";
 
 const LitElement = Object.getPrototypeOf(
@@ -104,10 +104,10 @@ class PassableScreenTimeCard extends LitElement {
       title: "Screen Time",
       subtitle: "Smart Screen Time & Lockout Hub",
       display_mode: "summary",
-      layout: "tiles",
+      layout: "compact",
       show_header: false,
-      show_summary_strip: true,
-      show_footer_strip: true,
+      show_summary_strip: false,
+      show_footer_strip: false,
       show_stats_button: true,
       default_expanded_drawer: "",
       require_pin: "auto",
@@ -256,28 +256,38 @@ class PassableScreenTimeCard extends LitElement {
     }
     const displayMode = config.display_mode === "full" ? "full" : "summary";
     const defaultShowHeader = displayMode === "full";
+    const layout = ["compact", "strip", "active", "tiles", "rows", "rings"].includes(
+      config.layout
+    )
+      ? config.layout
+      : "tiles";
+    const defaultStrips = !["compact", "strip"].includes(layout);
     this.config = {
+      ...config,
       title: config.title !== undefined ? config.title : "Screen Time",
       subtitle:
         config.subtitle !== undefined
           ? config.subtitle
           : "Smart Screen Time & Lockout Hub",
       display_mode: displayMode,
-      layout: ["tiles", "rows", "rings"].includes(config.layout)
-        ? config.layout
-        : "tiles",
+      layout,
       show_header:
         config.show_header !== undefined
           ? config.show_header !== false
           : defaultShowHeader,
-      show_summary_strip: config.show_summary_strip !== false,
-      show_footer_strip: config.show_footer_strip !== false,
+      show_summary_strip:
+        config.show_summary_strip !== undefined
+          ? Boolean(config.show_summary_strip)
+          : defaultStrips,
+      show_footer_strip:
+        config.show_footer_strip !== undefined
+          ? Boolean(config.show_footer_strip)
+          : defaultStrips,
       show_stats_button: config.show_stats_button !== false,
       default_expanded_drawer: config.default_expanded_drawer || "",
       require_pin:
         config.require_pin !== undefined ? config.require_pin : "auto",
       hide_admin_setup: config.hide_admin_setup === true,
-      ...config,
     };
 
     if (!this._drawerInitialized && this.config.default_expanded_drawer) {
@@ -289,6 +299,8 @@ class PassableScreenTimeCard extends LitElement {
   getCardSize() {
     if (this.config?.display_mode === "full") return 8;
     const layout = this.config?.layout || "tiles";
+    if (layout === "strip") return 1;
+    if (layout === "compact" || layout === "active") return 2;
     if (layout === "rings") return 3;
     if (layout === "rows") return 5;
     return 4;
@@ -1904,6 +1916,380 @@ class PassableScreenTimeCard extends LitElement {
     `;
   }
 
+  _renderConsolidatedHero(devices, restrictions, metrics) {
+    const entries = Object.entries(devices || {});
+    const anyLocked = metrics.lockedCount > 0 || metrics.activeRestrictions.length > 0;
+    const toneClass =
+      metrics.activeRestrictions.length > 0
+        ? "danger"
+        : metrics.lockedCount > 0
+          ? "locked"
+          : metrics.timerCount > 0
+            ? "timer"
+            : metrics.watchingCount > 0
+              ? "watching"
+              : "idle";
+
+    const heroIcon =
+      metrics.activeRestrictions.length > 0 || metrics.lockedCount > 0
+        ? "mdi:television-off"
+        : metrics.watchingCount > 0
+          ? "mdi:television-play"
+          : "mdi:television-shimmer";
+
+    const watchingEntry = entries.find(([, d]) => this._isTargetActive(d));
+    const activeAppEntry = entries.find(
+      ([, d]) => this._isTargetActive(d) && d.active_app && d.active_app !== "None"
+    );
+
+    let priorityChip = "";
+    if (metrics.activeRestrictions.length > 0) {
+      const r = metrics.activeRestrictions[0];
+      priorityChip = html`
+        <button
+          type="button"
+          class="zone-inline-chip danger clickable"
+          @click=${(ev) => this._toggleRestriction(r.entity, ev)}
+          title="${r.name} active — tap to toggle"
+        >
+          <ha-icon icon="${r.icon || "mdi:shield-alert-outline"}" style="--mdc-icon-size:12px;"></ha-icon>
+          <span>${r.name}</span>
+        </button>
+      `;
+    } else if (metrics.nextTimerDev) {
+      priorityChip = html`
+        <span class="zone-inline-chip ${metrics.nextTimerDev.dev.timer_mode === "lock" ? "warning" : "info"}">
+          ⏱ ${this._formatRemainingCompact(metrics.nextTimerDev.dev)}
+        </span>
+      `;
+    } else if (activeAppEntry) {
+      priorityChip = html`
+        <span class="zone-inline-chip success">▶ ${activeAppEntry[1].active_app}</span>
+      `;
+    } else if (metrics.lockedCount > 0) {
+      priorityChip = html`
+        <span class="zone-inline-chip warning">${metrics.lockedCount}/${metrics.totalDevices} Locked</span>
+      `;
+    }
+
+    let statusText = "No devices configured";
+    if (metrics.totalDevices > 0) {
+      if (metrics.watchingCount > 0) {
+        statusText =
+          metrics.watchingCount === 1 && watchingEntry
+            ? `${watchingEntry[1].name} active`
+            : `${metrics.watchingCount} active`;
+        if (metrics.lockedCount > 0) {
+          statusText += ` · ${metrics.lockedCount} locked`;
+        }
+      } else if (metrics.lockedCount === metrics.totalDevices) {
+        statusText = `All ${metrics.totalDevices} locked`;
+      } else if (metrics.lockedCount > 0) {
+        statusText = `${metrics.lockedCount} locked · ${metrics.permittedCount} open`;
+      } else {
+        statusText =
+          metrics.totalMinutes > 0
+            ? `All open · ${this._formatMins(metrics.totalMinutes)} today`
+            : "All permitted";
+      }
+    }
+
+    const rightVal = metrics.nextTimerDev
+      ? this._formatRemainingCompact(metrics.nextTimerDev.dev)
+      : metrics.totalMinutes > 0
+        ? this._formatMins(metrics.totalMinutes)
+        : `${metrics.permittedCount}/${metrics.totalDevices}`;
+    const rightSub = metrics.nextTimerDev
+      ? "Timer"
+      : metrics.totalMinutes > 0
+        ? "Today"
+        : "Open";
+
+    let hairlinePct = 0;
+    let hairlineColor = "#22c55e";
+    if (metrics.nextTimerDev) {
+      hairlinePct = this._getTimerProgressPct(metrics.nextTimerDev.dev);
+      hairlineColor =
+        metrics.nextTimerDev.dev.timer_mode === "lock"
+          ? "#f59e0b"
+          : metrics.nextTimerDev.dev.timer_mode === "wind_down"
+            ? "#8b5cf6"
+            : "#0ea5e9";
+    } else if (metrics.lockedCount > 0 && metrics.totalDevices > 0) {
+      hairlinePct = Math.round((metrics.lockedCount / metrics.totalDevices) * 100);
+      hairlineColor = metrics.activeRestrictions.length > 0 ? "#ef4444" : "#f59e0b";
+    } else {
+      const tracked = entries.filter(
+        ([, d]) => d.track_screen_time !== false && d.daily_limit_enabled && d.effective_daily_limit_minutes
+      );
+      if (tracked.length > 0) {
+        const maxPct = Math.max(
+          ...tracked.map(([, d]) =>
+            Math.min(
+              100,
+              Math.round(
+                ((d.screen_time_today_minutes || 0) /
+                  Math.max(1, d.effective_daily_limit_minutes)) *
+                  100
+              )
+            )
+          )
+        );
+        hairlinePct = maxPct;
+        hairlineColor = maxPct >= 100 ? "#ef4444" : maxPct >= 80 ? "#f59e0b" : "#22c55e";
+      }
+    }
+
+    const isDrawerOpen = this._drawerMode !== null;
+
+    return html`
+      <div
+        class="screen-zone-card hero-summary ${toneClass} ${isDrawerOpen ? "selected" : ""}"
+        @click=${() => this._openModal("controls")}
+        title="Tap to open Screen Time Command Center"
+      >
+        <div class="hero-zone-header">
+          <div class="hero-zone-identity">
+            <div class="device-icon-wrap ${toneClass}">
+              <ha-icon icon="${heroIcon}" style="--mdc-icon-size:21px;"></ha-icon>
+            </div>
+            <div class="hero-zone-title-wrap">
+              <div class="hero-zone-title-row">
+                <h3 class="hero-zone-title">${this.config?.title || "Screen Time"}</h3>
+                ${priorityChip}
+              </div>
+              <div class="hero-zone-subtitle">
+                <span class="sub-truncate">${statusText}</span>
+                ${metrics.totalDevices > 0
+                  ? html`
+                      <span class="summary-sep">•</span>
+                      <button
+                        type="button"
+                        class="hero-inline-expand-btn ${isDrawerOpen ? "open" : ""}"
+                        @click=${(ev) => this._toggleDrawer("all", ev)}
+                        title="${isDrawerOpen ? "Collapse screens" : "Expand all screens"}"
+                      >
+                        <span>${metrics.totalDevices} Screens</span>
+                        <ha-icon
+                          icon="${isDrawerOpen ? "mdi:chevron-up" : "mdi:chevron-down"}"
+                          style="--mdc-icon-size:14px;"
+                        ></ha-icon>
+                      </button>
+                    `
+                  : ""}
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-zone-primary" @click=${(ev) => ev.stopPropagation()}>
+            <div class="hero-primary-stack">
+              <div class="hero-primary-val ${toneClass}">${rightVal}</div>
+              <div class="hero-primary-sub">${rightSub}</div>
+            </div>
+
+            ${this._isPinSessionUnlocked()
+              ? html`
+                  <button
+                    type="button"
+                    class="icon-circle-btn pin-unlocked"
+                    @click=${() => this._lockPinSession()}
+                    title="Parent session unlocked — tap to lock"
+                  >
+                    <ha-icon icon="mdi:lock-open-check-outline" style="--mdc-icon-size:15px;"></ha-icon>
+                  </button>
+                `
+              : ""}
+
+            ${metrics.totalDevices > 0
+              ? html`
+                  <button
+                    type="button"
+                    class="device-lock-btn ${anyLocked ? "locked" : "unlocked"}"
+                    @click=${(ev) => this._setLockout("all", !anyLocked, {}, ev)}
+                    title="${anyLocked ? "Unlock all screens" : "Lock all screens"}"
+                  >
+                    <ha-icon
+                      icon="${anyLocked ? "mdi:lock" : "mdi:lock-open-variant"}"
+                      style="--mdc-icon-size:15px;"
+                    ></ha-icon>
+                  </button>
+                `
+              : ""}
+
+            <button
+              type="button"
+              class="icon-circle-btn"
+              @click=${(ev) => this._openModal("controls", null, ev)}
+              title="Open Screen Time Command Center"
+            >
+              <ha-icon icon="mdi:tune-variant" style="--mdc-icon-size:15px;"></ha-icon>
+            </button>
+          </div>
+        </div>
+
+        <div class="tile-hairline">
+          <div
+            class="tile-hairline-fill"
+            style="width:${hairlinePct}%; background:${hairlineColor};"
+          ></div>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderMinimalStripCard(devices, metrics) {
+    const anyLocked = metrics.lockedCount > 0 || metrics.activeRestrictions.length > 0;
+    const toneClass =
+      metrics.activeRestrictions.length > 0
+        ? "danger"
+        : metrics.lockedCount > 0
+          ? "locked"
+          : metrics.timerCount > 0
+            ? "timer"
+            : metrics.watchingCount > 0
+              ? "watching"
+              : "idle";
+
+    const isDrawerOpen = this._drawerMode !== null;
+    const pillLabel =
+      metrics.totalDevices === 0
+        ? "No Devices"
+        : anyLocked
+          ? `${metrics.lockedCount}/${metrics.totalDevices} Locked`
+          : `All ${metrics.totalDevices} Open`;
+
+    return html`
+      <div class="screen-time-summary-strip ${toneClass}">
+        <div class="summary-strip-left">
+          <span class="summary-status-dot ${toneClass}"></span>
+          ${this.config?.title
+            ? html`<span class="strip-brand-title">${this.config.title}</span>`
+            : ""}
+          <button
+            type="button"
+            class="strip-active-pill ${isDrawerOpen ? "drawer-open" : ""} ${toneClass}"
+            @click=${() => this._toggleDrawer("all")}
+            title="${isDrawerOpen ? "Collapse screens" : "Tap to expand screens"}"
+          >
+            ${pillLabel} ${isDrawerOpen ? "▴" : "▾"}
+          </button>
+
+          ${metrics.nextTimerDev
+            ? html`
+                <span class="summary-sep">•</span>
+                <button
+                  type="button"
+                  class="zone-inline-chip clickable ${metrics.nextTimerDev.dev.timer_mode === "lock" ? "warning" : "info"}"
+                  @click=${() => this._toggleDrawer(metrics.nextTimerDev.did)}
+                >
+                  <ha-icon icon="mdi:timer-outline" style="--mdc-icon-size:12px;"></ha-icon>
+                  <span>${this._formatRemainingCompact(metrics.nextTimerDev.dev)}</span>
+                </button>
+              `
+            : metrics.watchingCount > 0
+              ? html`
+                  <span class="summary-sep">•</span>
+                  <span class="strip-metric-text success">${metrics.watchingCount} Active</span>
+                `
+              : metrics.totalMinutes > 0
+                ? html`
+                    <span class="summary-sep">•</span>
+                    <span class="strip-metric-text">${this._formatMins(metrics.totalMinutes)}</span>
+                  `
+                : ""}
+        </div>
+
+        <div class="summary-strip-right">
+          ${this._isPinSessionUnlocked()
+            ? html`
+                <button
+                  type="button"
+                  class="icon-circle-btn pin-unlocked"
+                  @click=${() => this._lockPinSession()}
+                  title="Parent session unlocked — tap to lock"
+                >
+                  <ha-icon icon="mdi:lock-open-check-outline" style="--mdc-icon-size:15px;"></ha-icon>
+                </button>
+              `
+            : ""}
+
+          ${metrics.activeRestrictions.slice(0, 1).map(
+            (r) => html`
+              <button
+                type="button"
+                class="zone-inline-chip danger clickable"
+                @click=${(ev) => this._toggleRestriction(r.entity, ev)}
+              >
+                <span>${r.name}</span>
+              </button>
+            `
+          )}
+
+          ${metrics.totalDevices > 0
+            ? html`
+                <button
+                  type="button"
+                  class="master-pill-btn ${anyLocked ? "locked" : ""}"
+                  @click=${(ev) => this._setLockout("all", !anyLocked, {}, ev)}
+                  title="${anyLocked ? "Unlock all screens" : "Lock all screens"}"
+                >
+                  <ha-icon
+                    icon="${anyLocked ? "mdi:lock-open-variant" : "mdi:lock"}"
+                    style="--mdc-icon-size:13px;"
+                  ></ha-icon>
+                  <span>${anyLocked ? "Unlock" : "Lock"}</span>
+                </button>
+              `
+            : ""}
+
+          ${this.config?.show_stats_button !== false
+            ? html`
+                <button
+                  type="button"
+                  class="icon-circle-btn"
+                  @click=${(ev) => this._openModal("activity", null, ev)}
+                  title="Open Activity & Setup"
+                >
+                  <ha-icon icon="mdi:chart-bar" style="--mdc-icon-size:15px;"></ha-icon>
+                </button>
+              `
+            : ""}
+
+          <button
+            type="button"
+            class="icon-circle-btn"
+            @click=${(ev) => this._openModal("controls", null, ev)}
+            title="Open Screen Time Command Center"
+          >
+            <ha-icon icon="mdi:tune-variant" style="--mdc-icon-size:15px;"></ha-icon>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  _renderActiveOnlyDevices(devices, metrics) {
+    const activeEntries = Object.entries(devices || {}).filter(
+      ([, d]) => this._isTargetActive(d) || this._getTimerRemainingMs(d) > 0
+    );
+    if (activeEntries.length > 0) {
+      return this._renderDeviceTiles(Object.fromEntries(activeEntries));
+    }
+    if (this.config?.show_summary_strip === false) {
+      return html`
+        <div
+          class="active-idle-row"
+          @click=${() => this._toggleDrawer("all")}
+          title="Tap to expand all screens"
+        >
+          <span>All ${metrics.totalDevices} screens idle — tap to expand</span>
+          <ha-icon icon="mdi:chevron-down" style="--mdc-icon-size:15px;"></ha-icon>
+        </div>
+      `;
+    }
+    return "";
+  }
+
   _renderInlineDrawer(devices) {
     if (!this._drawerMode) return "";
 
@@ -1958,7 +2344,11 @@ class PassableScreenTimeCard extends LitElement {
                   const isActive = this._isTargetActive(dev);
                   return html`
                     <div class="drawer-device-row ${tone}">
-                      <div class="drawer-dev-left">
+                      <div
+                        class="drawer-dev-left clickable"
+                        @click=${() => (this._drawerMode = did)}
+                        title="Tap for ${dev.name} quick timers & lockout options"
+                      >
                         <div class="device-icon-wrap compact ${tone}">
                           <ha-icon icon="${this._getDeviceIcon(dev)}" style="--mdc-icon-size:16px;"></ha-icon>
                         </div>
@@ -2046,6 +2436,14 @@ class PassableScreenTimeCard extends LitElement {
           </div>
 
           <div class="drawer-actions">
+            <button
+              type="button"
+              class="drawer-filter-btn"
+              @click=${() => (this._drawerMode = "all")}
+              title="Back to all screens"
+            >
+              ← All
+            </button>
             <button
               type="button"
               class="drawer-filter-btn ${isActive ? "active" : ""}"
@@ -3916,34 +4314,50 @@ class PassableScreenTimeCard extends LitElement {
             `
           : html`
               <div class="card-content ${c.show_header === false ? "no-header" : ""}">
-                ${c.show_summary_strip !== false
-                  ? this._renderSummaryStrip(devices, metrics)
-                  : ""}
-
-                ${metrics.totalDevices > 0
-                  ? layout === "rings"
-                    ? this._renderDeviceRings(devices)
-                    : layout === "rows"
-                      ? this._renderDeviceRows(devices)
-                      : this._renderDeviceTiles(devices)
+                ${layout === "strip"
+                  ? html`
+                      ${this._renderMinimalStripCard(devices, metrics)}
+                      ${this._renderInlineDrawer(devices)}
+                      ${c.show_footer_strip === true
+                        ? this._renderFooterStrip(restrictions, metrics)
+                        : ""}
+                    `
                   : html`
-                      <div class="drawer-empty">
-                        No screen time devices configured.
-                        ${!c.hide_admin_setup
-                          ? html`<button
-                              type="button"
-                              class="inline-link-btn"
-                              @click=${() => {
-                                this._activitySubTab = "setup";
-                                this._openModal("activity");
-                              }}
-                            >Add Device →</button>`
-                          : ""}
-                      </div>
-                    `}
+                      ${c.show_summary_strip !== false
+                        ? this._renderSummaryStrip(devices, metrics)
+                        : ""}
 
-                ${this._renderInlineDrawer(devices)}
-                ${this._renderFooterStrip(restrictions, metrics)}
+                      ${layout === "compact"
+                        ? this._renderConsolidatedHero(devices, restrictions, metrics)
+                        : metrics.totalDevices > 0
+                          ? layout === "active"
+                            ? this._renderActiveOnlyDevices(devices, metrics)
+                            : layout === "rings"
+                              ? this._renderDeviceRings(devices)
+                              : layout === "rows"
+                                ? this._renderDeviceRows(devices)
+                                : this._renderDeviceTiles(devices)
+                          : html`
+                              <div class="drawer-empty">
+                                No screen time devices configured.
+                                ${!c.hide_admin_setup
+                                  ? html`<button
+                                      type="button"
+                                      class="inline-link-btn"
+                                      @click=${() => {
+                                        this._activitySubTab = "setup";
+                                        this._openModal("activity");
+                                      }}
+                                    >Add Device →</button>`
+                                  : ""}
+                              </div>
+                            `}
+
+                      ${this._renderInlineDrawer(devices)}
+                      ${c.show_footer_strip !== false
+                        ? this._renderFooterStrip(restrictions, metrics)
+                        : ""}
+                    `}
               </div>
             `}
 
@@ -4414,6 +4828,135 @@ class PassableScreenTimeCard extends LitElement {
       .tile-hairline-fill {
         height: 100%;
         transition: width 0.25s ease;
+      }
+
+      /* CONSOLIDATED HERO SUMMARY LAYOUT */
+      .screen-zone-card.hero-summary {
+        padding: 10px 12px 12px;
+      }
+      .hero-zone-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 100%;
+        min-width: 0;
+      }
+      .hero-zone-identity {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+      }
+      .hero-zone-title-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+      }
+      .hero-zone-title-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-width: 0;
+      }
+      .hero-zone-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--primary-text-color);
+        margin: 0;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .hero-zone-subtitle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        min-width: 0;
+        line-height: 1.25;
+      }
+      .hero-inline-expand-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--card-background-color, rgba(128, 128, 128, 0.12));
+        border: 1px solid var(--divider-color, rgba(128, 128, 128, 0.22));
+        color: var(--primary-text-color);
+        font-family: inherit;
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .hero-inline-expand-btn.open,
+      .hero-inline-expand-btn:hover {
+        border-color: var(--primary-color, #0284c7);
+        background: rgba(14, 165, 233, 0.12);
+      }
+      .hero-zone-primary {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-shrink: 0;
+      }
+      .hero-primary-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        margin-right: 2px;
+        font-variant-numeric: tabular-nums;
+      }
+      .hero-primary-val {
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.05;
+        color: var(--primary-text-color);
+      }
+      .hero-primary-val.locked { color: #d97706; }
+      .hero-primary-val.danger { color: #dc2626; }
+      .hero-primary-val.timer { color: #0284c7; }
+      .hero-primary-val.watching { color: #16a34a; }
+      .hero-primary-sub {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--secondary-text-color);
+      }
+      .strip-brand-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--primary-text-color);
+        white-space: nowrap;
+      }
+      .active-idle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: var(--secondary-background-color, rgba(128, 128, 128, 0.08));
+        border: 1px solid var(--divider-color, rgba(128, 128, 128, 0.14));
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--secondary-text-color);
+        cursor: pointer;
+      }
+      .drawer-dev-left.clickable {
+        cursor: pointer;
+        flex: 1;
       }
 
       /* ROWS LAYOUT */
@@ -5609,6 +6152,8 @@ class PassableScreenTimeCardEditor extends LitElement {
   render() {
     if (!this.hass || !this.config) return html``;
     const c = this.config;
+    const layout = c.layout || "tiles";
+    const defaultStrips = !["compact", "strip"].includes(layout);
 
     return html`
       <div class="editor-container">
@@ -5644,12 +6189,30 @@ class PassableScreenTimeCardEditor extends LitElement {
             <label class="form-label">Device Summary Layout</label>
             <select
               class="custom-select"
-              .value=${c.layout || "tiles"}
-              @change=${(ev) => this._updateConfig({ layout: ev.target.value })}
+              .value=${layout}
+              @change=${(ev) => {
+                const nextLayout = ev.target.value;
+                const next = { ...(this.config || {}), layout: nextLayout };
+                if (["compact", "strip"].includes(nextLayout)) {
+                  delete next.show_summary_strip;
+                  delete next.show_footer_strip;
+                }
+                this.config = next;
+                this.dispatchEvent(
+                  new CustomEvent("config-changed", {
+                    detail: { config: next },
+                    bubbles: true,
+                    composed: true,
+                  })
+                );
+              }}
             >
-              <option value="tiles">Compact 2-Column Tiles (Recommended)</option>
-              <option value="rows">Stacked Device Rows</option>
-              <option value="rings">Circular Progress Rings</option>
+              <option value="compact">Consolidated Hero Card — 1 Summary Tile (Wall Panel Recommended)</option>
+              <option value="strip">Minimal Single Bar — Ultra-Compact 1-Line Strip</option>
+              <option value="active">Active Only — Hide Idle / Off Devices</option>
+              <option value="tiles">Compact 2-Column Tiles (All Devices)</option>
+              <option value="rows">Stacked Device Rows (All Devices)</option>
+              <option value="rings">Circular Progress Rings (All Devices)</option>
             </select>
           </div>
 
@@ -5665,7 +6228,9 @@ class PassableScreenTimeCardEditor extends LitElement {
           <div class="switch-row">
             <label class="form-label">Show Top Summary Strip</label>
             <ha-switch
-              .checked=${c.show_summary_strip !== false}
+              .checked=${c.show_summary_strip !== undefined
+                ? Boolean(c.show_summary_strip)
+                : defaultStrips}
               @change=${(ev) =>
                 this._updateConfig({ show_summary_strip: ev.target.checked })}
             ></ha-switch>
@@ -5674,7 +6239,9 @@ class PassableScreenTimeCardEditor extends LitElement {
           <div class="switch-row">
             <label class="form-label">Show Bottom Footer Strip</label>
             <ha-switch
-              .checked=${c.show_footer_strip !== false}
+              .checked=${c.show_footer_strip !== undefined
+                ? Boolean(c.show_footer_strip)
+                : defaultStrips}
               @change=${(ev) =>
                 this._updateConfig({ show_footer_strip: ev.target.checked })}
             ></ha-switch>

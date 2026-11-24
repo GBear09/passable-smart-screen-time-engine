@@ -2,6 +2,15 @@
 
 All notable changes to **Passable Smart Screen Time Engine** will be documented in this file.
 
+## [2.1.0] - 2026-11-24
+
+### ✨ Added
+- **Trimmed-Down Wall-Panel Summary Layouts** (`compact`, `strip`, `active`):
+  - **`compact`** *(New Default)*: Collapses all managed screens into a single Passable Hero Summary Tile showing aggregate lock/active status, highest-priority badge, total daily time or next timer, 1-tap `Lock All`/`Unlock All` button, inline `N Screens ▾` expander, and Command Center launcher.
+  - **`strip`**: Ultra-slim single-line status bar (~44px) with expandable `All` drawer, timer badge, `Lock`/`Unlock` toggle, and Command Center access.
+  - **`active`**: Dynamically displays tiles only for screens currently active or running a timer, hiding idle/off devices on the main dashboard.
+- **Inline Drawer Drill-Down**: Tapping any device row inside the expanded `"all"` drawer now drills directly into that device's quick-timer and lockout drawer, with a `← All` button to jump back.
+
 ## [2.0.0] - 2026-11-24
 
 ### ✨ Added & Redesigned (Passable Suite Summary Card & Command Center)
